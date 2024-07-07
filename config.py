@@ -7,19 +7,17 @@ import os
 login(token=os.environ.get("HF_HUB_TOKEN"))
 
 
-
-
-DATA_CACHE_DIR="./data"
-HF_MODEL_CACHE_DIR="./hf_models"
-
 EXPERIMENT="gemma_dpo_rag"
 VERSION="v1"
 
 BASE_MODEL="google/gemma-1.1-2b-it"
 NEW_MODEL_NAME="gemma-1.1-2b-it"
 
-OUTPUT_DIR_SFT=f"./{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-sft"
-OUTPUT_DIR_DPO=f"./{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-{VERSION}"
+OUTPUT_DIR_SFT=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-sft"
+OUTPUT_DIR_DPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-{VERSION}"
+
+DATA_CACHE_DIR="./data"
+HF_MODEL_CACHE_DIR="./hf_models"
 
 
 SFT_DATASETS = {
