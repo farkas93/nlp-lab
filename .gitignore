@@ -1,3 +1,9 @@
+tests/
+data/
+hf_models/
+outputs/
+.env
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
