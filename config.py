@@ -21,10 +21,10 @@ HF_MODEL_CACHE_DIR="./hf_models"
 
 
 SFT_DATASETS = {
-    "allenai/ai2_arc": {"splits": ["train", "validation", "test"], "subsets": ['ARC-Challenge', 'ARC-Easy'], "formatter": ai2_arc.format_for_sft},
-    "facebook/belebele": {"splits": ["acm_Arab", "ita_Latn", "fra_Latn", "hun_Latn",  "deu_Latn", "rus_Cyrl", "spa_Latn", "eng_Latn"], "subsets": ['default'], "formatter": blebele.format_for_sft},
-    #"Open-Orca/SlimOrca": {"splits": ["train"], "subsets": ['default'], "formatter": slim_orca.format_for_sft},
-    "rajpurkar/squad_v2": {"splits": ["train", "validation"], "subsets": ['squad_v2'], "formatter": squad_v2.format_for_sft},
+    "allenai/ai2_arc": {"batch_size" : 4,"splits": ["train", "validation", "test"], "subsets": ['ARC-Challenge', 'ARC-Easy'], "formatter": ai2_arc.format_for_sft},
+    "facebook/belebele": {"batch_size" : 4, "splits": ["acm_Arab", "ita_Latn", "fra_Latn", "hun_Latn",  "deu_Latn", "rus_Cyrl", "spa_Latn", "eng_Latn"], "subsets": ['default'], "formatter": blebele.format_for_sft},
+    "Open-Orca/SlimOrca": {"batch_size" : 2, "splits": ["train"], "subsets": ['default'], "formatter": slim_orca.format_for_sft},
+    "rajpurkar/squad_v2": {"batch_size" : 2,"splits": ["train", "validation"], "subsets": ['squad_v2'], "formatter": squad_v2.format_for_sft},
 }
 SFT_DATASETS_LIST=["allenai/ai2_arc", #Abstraction and reasoning dataset, useful in measuring "intelligence" to a certain extent.
               "facebook/belebele", #Multi-lingual reading comprehension dataset.

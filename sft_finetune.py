@@ -33,15 +33,15 @@ def init_model(model_name : str):
     model.config.use_cache = False # Gradient checkpointing is used by default but not compatible with caching
     return model
 
-def create_trainer(model, tokenizer, peft_config: LoraConfig, train_ds, test_ds):
+def create_trainer(model, tokenizer, batch_size, peft_config: LoraConfig, train_ds, test_ds):
     sft_config = SFTConfig(
         output_dir=out_dir,
         eval_strategy="epoch",
         do_eval=True,
         dataset_text_field="text",
         optim="paged_adamw_8bit",
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
         log_level="debug",
         save_strategy="epoch",  # Save after each epoch
         save_steps=None,  # No need to set save_steps
@@ -162,16 +162,17 @@ if __name__ == "__main__":
     model = init_model(model_name=model_name)
     for d_name in config.SFT_DATASETS_LIST:
         if d_name in config.SFT_DATASETS.keys():
-            train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, config.SFT_DATASETS[d_name])
-            trainer = create_trainer(model, config.TOKENIZER, config.PEFT_CONF, train_ds, test_ds)
+            dataset_conf = config.SFT_DATASETS[d_name]
+            train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, dataset_conf)
+            trainer = create_trainer(model, config.TOKENIZER, dataset_conf['batch_size'], config.PEFT_CONF, train_ds, test_ds)
             trainer.train()
         else:
             logging.info(f"Trying to access dataset without proper config! Dataset: {d_name}")
     
-    # trainer.save_model()
-    # _write_model_and_upload(model, out_dir=out_dir)
+    trainer.save_model()
+    _write_model_and_upload(model, out_dir=out_dir)
 
-    # # free the memory again
-    # del model
-    # del trainer
-    # torch.cuda.empty_cache()
+    # free the memory again
+    del model
+    del trainer
+    torch.cuda.empty_cache()
