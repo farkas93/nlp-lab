@@ -1,9 +1,11 @@
 import config 
+import logging
 
 def format_for_sft(record):
     formatter = Ai2arcToSFTFormatter()
     dialog_instance = formatter.preformat_ai2_arc(record=record)
-    combined = formatter.combine_prompt_response(dialog_instance=dialog_instance)    
+    combined = formatter.combine_prompt_response(dialog_instance=dialog_instance) 
+    logging.info(combined)
     return combined
 
 

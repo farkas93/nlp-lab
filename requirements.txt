@@ -6,3 +6,5 @@ trl
 transformers
 datasets
 accelerate
+bitsandbytes
+peft

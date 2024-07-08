@@ -23,7 +23,6 @@ class SlimOrcaToSFTFormatter():
             messages.pop(0)
             messages[0] = self.merge_sys_and_user(sys, messages[0])
             formatted_text = config.apply_chat_template(messages)
-
         return {
             "text": formatted_text
         }

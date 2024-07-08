@@ -2,6 +2,7 @@ tests/
 data/
 hf_models/
 outputs/
+logs/
 .env
 
 # Byte-compiled / optimized / DLL files

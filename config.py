@@ -1,7 +1,7 @@
 from peft import LoraConfig, PeftModel
 from huggingface_hub import login
 from transformers import AutoTokenizer
-from dataset_formatters import (ai2_arc, blebele, slim_orca, squad_v2)
+from data_etl import (ai2_arc, blebele, slim_orca, squad_v2)
 import logging
 import os
 login(token=os.environ.get("HF_HUB_TOKEN"))
@@ -19,12 +19,15 @@ OUTPUT_DIR_DPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-{VERSION}
 DATA_CACHE_DIR="./data"
 HF_MODEL_CACHE_DIR="./hf_models"
 
+MAX_TRAIN_SAMPLES_IN_MEMORY=4000
+DEFAULT_BATCH_SIZE = 8
 
+# TODO: DOES IT EVEN MAKE SENSE TO DEFINE BATCH SIZE PER DATASET?
 SFT_DATASETS = {
-    "allenai/ai2_arc": {"batch_size" : 4,"splits": ["train", "validation", "test"], "subsets": ['ARC-Challenge', 'ARC-Easy'], "formatter": ai2_arc.format_for_sft},
-    "facebook/belebele": {"batch_size" : 4, "splits": ["acm_Arab", "ita_Latn", "fra_Latn", "hun_Latn",  "deu_Latn", "rus_Cyrl", "spa_Latn", "eng_Latn"], "subsets": ['default'], "formatter": blebele.format_for_sft},
-    "Open-Orca/SlimOrca": {"batch_size" : 2, "splits": ["train"], "subsets": ['default'], "formatter": slim_orca.format_for_sft},
-    "rajpurkar/squad_v2": {"batch_size" : 2,"splits": ["train", "validation"], "subsets": ['squad_v2'], "formatter": squad_v2.format_for_sft},
+    "allenai/ai2_arc": { "splits": ["train", "validation", "test"], "subsets": ['ARC-Challenge', 'ARC-Easy'], "formatter": ai2_arc.format_for_sft},
+    "facebook/belebele": { "splits": ["acm_Arab", "ita_Latn", "fra_Latn", "hun_Latn",  "deu_Latn", "rus_Cyrl", "spa_Latn", "eng_Latn"], "subsets": ['default'], "formatter": blebele.format_for_sft},
+    "Open-Orca/SlimOrca": { "splits": ["train"], "subsets": ['default'], "formatter": slim_orca.format_for_sft},
+    "rajpurkar/squad_v2": { "splits": ["train", "validation"], "subsets": ['squad_v2'], "formatter": squad_v2.format_for_sft},
 }
 SFT_DATASETS_LIST=["allenai/ai2_arc", #Abstraction and reasoning dataset, useful in measuring "intelligence" to a certain extent.
               "facebook/belebele", #Multi-lingual reading comprehension dataset.
@@ -60,7 +63,8 @@ TOKENIZER.padding_side = 'right'
 def apply_chat_template(msg):
     return TOKENIZER.apply_chat_template(msg, tokenize=False)
 
-
+def get_num_token(msg):
+    return len(TOKENIZER.tokenize(msg))
 
 try:
     log_level = os.environ['LOG_LEVEL'].upper()
