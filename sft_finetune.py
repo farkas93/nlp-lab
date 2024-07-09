@@ -89,8 +89,10 @@ if __name__ == "__main__":
             train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, dataset_conf)
             ind = 0
             max_ind = 1
-
+            trainer = None
             while ind < max_ind:
+                if trainer: #Cleanup the old trainer which we don't need anymore
+                    del trainer
                 train_batch, test_batch, ind, max_ind = create_batch(train_ds, test_ds, 0)
                 d_name_folder = d_name.replace("/","_")               
                 out_dir =  f"{config.OUTPUT_DIR_SFT}/{d_name_folder}/batch_{ind}"            
