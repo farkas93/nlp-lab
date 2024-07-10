@@ -8,7 +8,7 @@ from transformers import (
 from trl import SFTTrainer, SFTConfig
 import config
 import logging
-from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, create_batch
+from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, subsample_dataset
 
 def init_model(model_name : str):    
 
@@ -83,22 +83,22 @@ if __name__ == "__main__":
     model_name = config.BASE_MODEL
     model = init_model(model_name=model_name)
 
+    trainer = None
     for d_name in config.SFT_DATASETS_LIST:
         if d_name in config.SFT_DATASETS.keys():
+            if trainer: #Cleanup the old trainer which we don't need anymore
+                del trainer
+                
+            d_name_folder = d_name.replace("/","_")               
+            out_dir =  f"{config.OUTPUT_DIR_SFT}/{d_name_folder}"           
             dataset_conf = config.SFT_DATASETS[d_name]
+
             train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, dataset_conf)
-            ind = 0
-            max_ind = 1
-            trainer = None
-            while ind < max_ind:
-                if trainer: #Cleanup the old trainer which we don't need anymore
-                    del trainer
-                train_batch, test_batch, ind, max_ind = create_batch(train_ds, test_ds, 0)
-                d_name_folder = d_name.replace("/","_")               
-                out_dir =  f"{config.OUTPUT_DIR_SFT}/{d_name_folder}/batch_{ind}"            
-                trainer = create_trainer(model, train_batch, test_batch, out_dir)
-                trainer.train()
-                model = trainer.model
+            train_batch, test_batch = subsample_dataset(train_ds, test_ds)
+
+            trainer = create_trainer(model, train_batch, test_batch, out_dir)
+            trainer.train()
+            model = trainer.model
             
         else:
             logging.info(f"Trying to access dataset without proper config! Dataset: {d_name}")

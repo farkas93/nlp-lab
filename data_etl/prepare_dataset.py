@@ -65,6 +65,11 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
 
     
     formatter_func = dataset_conf['formatter']
+
+    if not formatter_func:
+        # Early out if no formatting needed
+        return train_data, test_data
+
     # Debugging: Print the sample formatted output
     logging.debug("Before Mapping:")
     for idx in range(min(7, len(train_data))):
@@ -74,7 +79,7 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     # Apply formatter to the dataset
     formatted_train_data = train_data.map(lambda example: formatter_func(example), remove_columns=train_data.column_names)
     formatted_test_data = test_data.map(lambda example: formatter_func(example), remove_columns=train_data.column_names)
-
+     
     # Debugging: Print the dataset after mapping
     logging.info("After Mapping:\n==========\n")
     for idx in range(min(5, len(formatted_train_data))):
@@ -83,9 +88,9 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     return formatted_train_data, formatted_test_data 
 
 
-def create_batch(train, test, ind):
+def create_data_partition(train, test, ind):
     max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY
-    max_test_samples = max(500, 0.2*max_samples)
+    max_test_samples = max(500, int(0.2*max_samples))
 
     #create a test batch 10% the size of the train batch
     if len(test) < max_test_samples:
@@ -106,3 +111,24 @@ def create_batch(train, test, ind):
 
     logging.info(f"selected {len(train_batch)} samples. {ind}/{max_ind}")
     return train_batch, test_batch, next_ind, max_ind
+
+
+
+def subsample_dataset(train, test):
+    max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY
+    max_test_samples = max(500, int(0.2*max_samples))
+
+    #create a test batch 10% the size of the train batch
+    if len(test) < max_test_samples:
+        test_batch = test
+    else:
+        shuffled_dataset = test.shuffle() 
+        test_batch = shuffled_dataset.select(range(max_test_samples)) 
+
+    if len(train) < max_samples:
+        return train, test_batch
+    else:
+        shuffled_dataset = train.shuffle(seed=42) 
+        train_batch = shuffled_dataset.select(range(max_samples))
+
+    return train_batch, test_batch
