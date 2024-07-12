@@ -3,12 +3,13 @@ from peft import LoraConfig, AutoPeftModelForCausalLM, prepare_model_for_kbit_tr
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
+    BitsAndBytesConfig
 )
 from trl import SFTTrainer, SFTConfig
 import config
 import logging
-from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, subsample_dataset
+import mlflow
+from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, sample_from_dataset
 
 def init_model(model_name : str):    
 
@@ -53,6 +54,8 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
         num_train_epochs=3,
         warmup_steps=30,
         lr_scheduler_type="linear",
+        report_to="mlflow",
+        logging_dir='./logs',
     )
     trainer = SFTTrainer(
             model=model,
@@ -60,6 +63,7 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
             tokenizer=tokenizer,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
+            max_seq_length=1024,
             args=sft_config,
     )
     return trainer
@@ -82,22 +86,25 @@ if __name__ == "__main__":
 
     model_name = config.BASE_MODEL
     model = init_model(model_name=model_name)
-
+    mlflow.start_run()
     trainer = None
     for d_name in config.SFT_DATASETS_LIST:
         if d_name in config.SFT_DATASETS.keys():
             if trainer: #Cleanup the old trainer which we don't need anymore
                 del trainer
-                
+
             d_name_folder = d_name.replace("/","_")               
             out_dir =  f"{config.OUTPUT_DIR_SFT}/{d_name_folder}"           
             dataset_conf = config.SFT_DATASETS[d_name]
 
             train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, dataset_conf)
-            train_batch, test_batch = subsample_dataset(train_ds, test_ds)
+            train_batch, test_batch = sample_from_dataset(train_ds, test_ds)
 
             trainer = create_trainer(model, train_batch, test_batch, out_dir)
-            trainer.train()
+            if dataset_conf['from_ckp']:
+                trainer.train(resume_from_checkpoint=config.CHECKPOINT_DIR)
+            else:
+                trainer.train()
             model = trainer.model
             
         else:
@@ -111,3 +118,4 @@ if __name__ == "__main__":
     del model
     del trainer
     torch.cuda.empty_cache()
+    mlflow.end_run()

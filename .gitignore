@@ -4,6 +4,8 @@ hf_models/
 outputs/
 logs/
 .env
+mlruns/
+mlflow.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

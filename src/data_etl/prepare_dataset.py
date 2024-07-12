@@ -88,8 +88,8 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     return formatted_train_data, formatted_test_data 
 
 
-def create_data_partition(train, test, ind):
-    max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY
+def create_data_partition(train, test, ind, max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY):
+   
     max_test_samples = max(500, int(0.2*max_samples))
 
     #create a test batch 10% the size of the train batch
@@ -114,8 +114,7 @@ def create_data_partition(train, test, ind):
 
 
 
-def subsample_dataset(train, test):
-    max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY
+def sample_from_dataset(train, test, max_samples = config.MAX_TRAIN_SAMPLES_IN_MEMORY, sample_seed=42):    
     max_test_samples = max(500, int(0.2*max_samples))
 
     #create a test batch 10% the size of the train batch
@@ -128,7 +127,7 @@ def subsample_dataset(train, test):
     if len(train) < max_samples:
         return train, test_batch
     else:
-        shuffled_dataset = train.shuffle(seed=42) 
+        shuffled_dataset = train.shuffle(seed=sample_seed) 
         train_batch = shuffled_dataset.select(range(max_samples))
 
     return train_batch, test_batch
