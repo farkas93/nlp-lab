@@ -34,6 +34,7 @@ def init_model(model_name : str):
     return model
 
 def create_trainer(model, train_dataset, eval_dataset, out_dir,
+                   max_seq_len: int = 1024,
                    tokenizer : AutoTokenizer = config.TOKENIZER, 
                    batch_size : int = config.DEFAULT_BATCH_SIZE, 
                    peft_config: LoraConfig = config.PEFT_CONF):
@@ -51,7 +52,7 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
         logging_steps=100,
         learning_rate=2e-5,
         eval_steps=None,
-        num_train_epochs=3,
+        num_train_epochs=config.NUM_EPOCHS,
         warmup_steps=30,
         lr_scheduler_type="linear",
         report_to="mlflow",
@@ -63,22 +64,30 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
             tokenizer=tokenizer,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            max_seq_length=1024,
+            max_seq_length=max_seq_len,
             args=sft_config,
     )
     return trainer
 
-def _write_model_and_upload(model, out_dir:str):
+def _write_model_and_upload(peft_chkpt:str, out_dir:str, repo_name:str):
+    #TODO: This look super wrong
     
     # Load PEFT model on CPU
     model = AutoPeftModelForCausalLM.from_pretrained(
-        out_dir,
+        peft_chkpt,
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
     )
+
+    # Load the tokenizer from the PEFT checkpoint
+    tokenizer = AutoTokenizer.from_pretrained(peft_chkpt)
+
     # Merge LoRA and base model and save
     merged_model = model.merge_and_unload()
     merged_model.save_pretrained(out_dir, safe_serialization=True, max_shard_size="4GB")
+    tokenizer.save_pretrained(out_dir)
+    merged_model.push_to_hub(repo_name)
+    tokenizer.push_to_hub(repo_name)
 
 
 
@@ -100,8 +109,8 @@ if __name__ == "__main__":
             train_ds, test_ds = load_dataset_with_splits_and_subsets(d_name, dataset_conf)
             train_batch, test_batch = sample_from_dataset(train_ds, test_ds)
 
-            trainer = create_trainer(model, train_batch, test_batch, out_dir)
-            if dataset_conf['from_ckp']:
+            trainer = create_trainer(model, train_batch, test_batch, out_dir, max_seq_len=dataset_conf["max_seq_len"])
+            if config.RESUME_CHECKPOINT:
                 trainer.train(resume_from_checkpoint=config.CHECKPOINT_DIR)
             else:
                 trainer.train()
@@ -110,9 +119,12 @@ if __name__ == "__main__":
         else:
             logging.info(f"Trying to access dataset without proper config! Dataset: {d_name}")
     
+    # #TODO: Set save directory to experiment folder
     trainer.save_model()
     out_dir = config.OUTPUT_DIR_SFT + "/final"
-    _write_model_and_upload(model, out_dir=out_dir)
+    _write_model_and_upload(peft_chkpt = "./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-rag-sft/facebook_belebele", 
+                            out_dir = out_dir, 
+                            repo_name = "zskalo/gemma-1.1-2b-it-rag-sft")
 
     # free the memory again
     del model

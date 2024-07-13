@@ -1,4 +1,4 @@
 #!/bin/bash
 export $(grep -v '^#' .env | xargs)
-mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns &
+docker compose up -d
 python src/sft_finetune.py

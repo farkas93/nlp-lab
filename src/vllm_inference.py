@@ -6,7 +6,7 @@ from transformers import AutoTokenizer
 def download_and_test(model, max_tokens):
 
     prompts = [
-        "Write an infinite story about a boy and girl and their adventures!"
+        "What is the capital of Italy?"
     ]
     # Before your existing code
     tokenizer = AutoTokenizer.from_pretrained(model)
@@ -33,4 +33,4 @@ def download_and_test(model, max_tokens):
     
 if __name__ == "__main__":
     max_tokens=4096
-    download_and_test(model=config.BASE_MODEL, max_tokens=max_tokens)
+    download_and_test(model="zskalo/gemma-1.1-2b-it-rag-sft", max_tokens=max_tokens)

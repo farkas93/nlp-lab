@@ -8,8 +8,8 @@ def format_for_sft(record):
 
 class BelebeleToSFTFormatter():
     def preformat_belebele(self, record):
-        prompt = ("Your task is to identify the correct answer within the passage." 
-                    f"The language is {self.convert_lang_tag(record['dialect'])}."
+        prompt = ("Your task is to identify the correct answer within the passage. " 
+                    f"The language is {self.convert_lang_tag(record['dialect'])}. "
                     f"Passage: {record['flores_passage']}\n\nQuestion: {record['question']}\n\nChoices:\n")
         prompt += f"1. {record['mc_answer1']}\n"
         prompt += f"2. {record['mc_answer2']}\n"

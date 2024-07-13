@@ -1,0 +1,19 @@
+services:
+  mlflow:
+    image: ubuntu/mlflow:2.1.1_1.0-22.04
+    container_name: mlflow-container
+    environment:
+      - TZ=UTC
+    ports:
+      - "55000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+    restart: unless-stopped
+
+volumes:
+  mlflow-data:
