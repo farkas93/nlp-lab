@@ -1,6 +1,6 @@
 services:
   mlflow:
-    image: ubuntu/mlflow:2.1.1_1.0-22.04
+    image: ghcr.io/mlflow/mlflow:v2.14.3
     container_name: mlflow-container
     environment:
       - TZ=UTC
