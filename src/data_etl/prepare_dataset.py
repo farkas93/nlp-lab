@@ -3,7 +3,7 @@ import logging
 from typing import List
 from datasets import load_dataset, concatenate_datasets
 
-def generate_splits(d_name:str, splits: List, subset=None):
+def generate_splits(d_name:str, splits: List, subset=None, split_aliases=None):
 
     train_data = None
     test_data = None
@@ -20,6 +20,11 @@ def generate_splits(d_name:str, splits: List, subset=None):
             train_data = split_dataset['train']
             test_data = split_dataset['test']
     else:
+        if split_aliases:
+            train_split_name = split_aliases['train']
+            test_split_name = split_aliases['test']
+            return dataset[train_split_name], dataset[test_split_name]
+        
         if 'train' in splits and 'test' in splits:
             return dataset['train'], dataset['test']
         else:
@@ -44,12 +49,19 @@ def generate_splits(d_name:str, splits: List, subset=None):
 def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     splits = dataset_conf.get("splits")
     subsets = dataset_conf.get("subsets")
+    dsc_keys= dataset_conf.keys()
     
     train_data = None
     test_data = None
     sub = "None"
     try:
-        if subsets is None:
+        if "split_aliases" in dsc_keys:
+            train_data, test_data = generate_splits(d_name=dataset_name, 
+                                                    splits=None, 
+                                                    subset=sub, 
+                                                    split_aliases=dataset_conf['split_aliases'])
+
+        elif subsets is None:
             train_data, test_data = generate_splits(d_name=dataset_name, splits=splits, subset=sub)
         else:
             for sub in subsets:
@@ -81,9 +93,9 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     formatted_test_data = test_data.map(lambda example: formatter_func(example), remove_columns=train_data.column_names)
      
     # Debugging: Print the dataset after mapping
-    logging.info("After Mapping:\n==========\n")
+    logging.debug("After Mapping:\n==========\n")
     for idx in range(min(5, len(formatted_train_data))):
-        logging.info(f"Mapped output {idx}: {formatted_train_data[idx]}")
+        logging.debug(f"Mapped output {idx}: {formatted_train_data[idx]}")
 
     return formatted_train_data, formatted_test_data 
 

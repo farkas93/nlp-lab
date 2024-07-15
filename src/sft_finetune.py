@@ -1,37 +1,14 @@
 import torch
-from peft import LoraConfig, AutoPeftModelForCausalLM, prepare_model_for_kbit_training
+from peft import LoraConfig
 from transformers import (
-    AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig
 )
 from trl import SFTTrainer, SFTConfig
 import config
 import logging
 import mlflow
+import model_ops
 from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, sample_from_dataset
-
-def init_model(model_name : str):    
-
-    logging.info(f"Preset chat template:\n{config.TOKENIZER.default_chat_template}\nFor model: {model_name}")
-    compute_dtype = getattr(torch, "float16")
-    bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_use_double_quant=True,
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-            model_name, 
-            quantization_config=bnb_config, 
-            device_map={"": 0},
-            cache_dir=config.HF_MODEL_CACHE_DIR            
-    )
-    model = prepare_model_for_kbit_training(model)
-    #Configure the pad token in the model
-    model.config.pad_token_id = config.TOKENIZER.pad_token_id
-    model.config.use_cache = False # Gradient checkpointing is used by default but not compatible with caching
-    return model
 
 def create_trainer(model, train_dataset, eval_dataset, out_dir,
                    max_seq_len: int = 1024,
@@ -40,8 +17,6 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
                    peft_config: LoraConfig = config.PEFT_CONF):
     sft_config = SFTConfig(
         output_dir=out_dir,
-        eval_strategy="epoch",
-        do_eval=True,
         dataset_text_field="text",
         optim="paged_adamw_8bit",
         per_device_train_batch_size=batch_size,
@@ -51,6 +26,8 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
         save_steps=None,  # No need to set save_steps
         logging_steps=100,
         learning_rate=2e-5,
+        do_eval=True,
+        eval_strategy="epoch",
         eval_steps=None,
         num_train_epochs=config.NUM_EPOCHS,
         warmup_steps=30,
@@ -69,32 +46,10 @@ def create_trainer(model, train_dataset, eval_dataset, out_dir,
     )
     return trainer
 
-def _write_model_and_upload(peft_chkpt:str, out_dir:str, repo_name:str):
-    #TODO: This look super wrong
-    
-    # Load PEFT model on CPU
-    model = AutoPeftModelForCausalLM.from_pretrained(
-        peft_chkpt,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-    )
-
-    # Load the tokenizer from the PEFT checkpoint
-    tokenizer = AutoTokenizer.from_pretrained(peft_chkpt)
-
-    # Merge LoRA and base model and save
-    merged_model = model.merge_and_unload()
-    merged_model.save_pretrained(out_dir, safe_serialization=True, max_shard_size="4GB")
-    tokenizer.save_pretrained(out_dir)
-    merged_model.push_to_hub(repo_name)
-    tokenizer.push_to_hub(repo_name)
-
-
-
 if __name__ == "__main__":
 
     model_name = config.BASE_MODEL
-    model = init_model(model_name=model_name)
+    model = model_ops.init_model(model_name=model_name)
     mlflow.start_run()
     trainer = None
     for d_name in config.SFT_DATASETS_LIST:
@@ -120,11 +75,11 @@ if __name__ == "__main__":
             logging.info(f"Trying to access dataset without proper config! Dataset: {d_name}")
     
     # #TODO: Set save directory to experiment folder
-    trainer.save_model()
     out_dir = config.OUTPUT_DIR_SFT + "/final"
-    _write_model_and_upload(peft_chkpt = "./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-rag-sft/facebook_belebele", 
+    trainer.save_model(output_dir = out_dir)
+    model_ops.write_model_and_upload(peft_chkpt = out_dir, 
                             out_dir = out_dir, 
-                            repo_name = "zskalo/gemma-1.1-2b-it-rag-sft")
+                            repo_name = f"{config.NEW_MODEL_NAME}-sft")
 
     # free the memory again
     del model

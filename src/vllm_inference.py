@@ -6,7 +6,7 @@ from transformers import AutoTokenizer
 def download_and_test(model, max_tokens):
 
     prompts = [
-        "What is the capital of Italy?"
+        " The capital of Switzerland is Geneva. The capital of italy is Paris. The capital of hungary is Budapest. The capital of Switzerland is Bern. The capital of Switzerland is Zürich. What is the capital of switzerland? Provide me a single solution wrapped in a json where the solution is the value of \{ \"answer\" : your_value \}"
     ]
     # Before your existing code
     tokenizer = AutoTokenizer.from_pretrained(model)
@@ -18,7 +18,8 @@ def download_and_test(model, max_tokens):
 
     sampling_params = SamplingParams(temperature=0.1, top_p=0.8, top_k=20, max_tokens=max_tokens)
     loading_start = time.time()
-    llm = LLM(model=model, max_model_len=8192)
+    llm = LLM(model=model, max_model_len=32768,
+            cache_dir=config.HF_MODEL_CACHE_DIR)
     print("--- Loading time: %s seconds ---" % (time.time() - loading_start))
     generation_time = time.time()
     outputs = llm.generate(prompts, sampling_params)
@@ -33,4 +34,5 @@ def download_and_test(model, max_tokens):
     
 if __name__ == "__main__":
     max_tokens=4096
-    download_and_test(model="zskalo/gemma-1.1-2b-it-rag-sft", max_tokens=max_tokens)
+    print(f"model: {config.BASE_MODEL}")
+    download_and_test(model=config.BASE_MODEL, max_tokens=max_tokens)
