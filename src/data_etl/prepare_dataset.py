@@ -10,6 +10,12 @@ def generate_splits(d_name:str, splits: List, subset=None, split_aliases=None):
 
     dataset = load_dataset(d_name, name=subset, cache_dir=config.DATA_CACHE_DIR) if subset else load_dataset(d_name, cache_dir=config.DATA_CACHE_DIR)
     logging.info(f"Loaded {d_name} with all splits and subset {subset}")
+
+    if split_aliases:
+        train_split_name = split_aliases['train']
+        test_split_name = split_aliases['test']
+        return dataset[train_split_name], dataset[test_split_name]
+    
     if splits is None or len(splits) == 1:
             # Create a split
             if splits is None:
@@ -19,12 +25,7 @@ def generate_splits(d_name:str, splits: List, subset=None, split_aliases=None):
             split_dataset = shuffled_dataset.train_test_split(test_size=0.1, seed=42)
             train_data = split_dataset['train']
             test_data = split_dataset['test']
-    else:
-        if split_aliases:
-            train_split_name = split_aliases['train']
-            test_split_name = split_aliases['test']
-            return dataset[train_split_name], dataset[test_split_name]
-        
+    else:        
         if 'train' in splits and 'test' in splits:
             return dataset['train'], dataset['test']
         else:
@@ -57,8 +58,8 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     try:
         if "split_aliases" in dsc_keys:
             train_data, test_data = generate_splits(d_name=dataset_name, 
-                                                    splits=None, 
-                                                    subset=sub, 
+                                                    splits=None,
+                                                    subset=subsets[0], 
                                                     split_aliases=dataset_conf['split_aliases'])
 
         elif subsets is None:
@@ -93,9 +94,9 @@ def load_dataset_with_splits_and_subsets(dataset_name, dataset_conf):
     formatted_test_data = test_data.map(lambda example: formatter_func(example), remove_columns=train_data.column_names)
      
     # Debugging: Print the dataset after mapping
-    logging.debug("After Mapping:\n==========\n")
+    logging.info("After Mapping:\n==========\n")
     for idx in range(min(5, len(formatted_train_data))):
-        logging.debug(f"Mapped output {idx}: {formatted_train_data[idx]}")
+        logging.info(f"Mapped output {idx}: {formatted_train_data[idx]}")
 
     return formatted_train_data, formatted_test_data 
 

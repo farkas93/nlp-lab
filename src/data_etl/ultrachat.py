@@ -1,13 +1,10 @@
 import config
+import logging
 
 def format_for_dpo(record):
-    ds_conf = config.DPO_DATASETS['allenai/ultrafeedback_binarized_cleaned']
-    if ds_conf['combine_msgs']:
         formatter = UltrachatFormatter()
-        combined = formatter.combine_prompt_response(dialog_instance=record)
+        combined = formatter.combine_prompt_and_messages(dialog_instance=record)
         return combined
-    else:
-        return record
 
 class UltrachatFormatter():
 
@@ -17,9 +14,16 @@ class UltrachatFormatter():
         
         # Use the chat template to format the conversation
         formatted_text = config.apply_chat_template(messages)
+
+        chosen = dialog_instance['chosen']
+        chosen_answer = config.apply_chat_template(chosen)
+        logging.info(f"applied template: {chosen_answer}")
+
+        rejected = dialog_instance['rejected']
+        rejected_answer = config.apply_chat_template(rejected)
         
         return {
             "prompt": formatted_text,
-            "chosen": dialog_instance['chosen'],
-            "rejected": dialog_instance['rejected']
+            "chosen": chosen_answer,
+            "rejected": rejected_answer
         }

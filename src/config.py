@@ -15,11 +15,11 @@ VERSION="v1"
 BASE_MODEL="zskalo/gemma-1.1-2b-it-rag-sft"
 NEW_MODEL_NAME="gemma-1.1-2b-it-32k-rag"
 
-RESUME_CHECKPOINT = False
-CHECKPOINT_DIR = "./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-rag-sft-v2/final"
+RESUME_CHECKPOINT = True
+CHECKPOINT_DIR = "./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-32k-rag-rag-v1/Intel_orca_dpo_pairs/checkpoint-2500"
 
 OUTPUT_DIR_SFT=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-sft-v2"
-OUTPUT_DIR_DPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-{VERSION}"
+OUTPUT_DIR_DPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-{VERSION}"
 
 DATA_CACHE_DIR="./data"
 HF_MODEL_CACHE_DIR="./hf_models"
@@ -110,7 +110,6 @@ DPO_DATASETS = {
             "test" : "test_prefs"
         },
         "subsets": ['default'],
-        "combine_msgs": False,
         "formatter": ultrachat.format_for_dpo
         }
     }
