@@ -52,6 +52,7 @@ if __name__ == "__main__":
 
     model_name = config.BASE_MODEL
     model = model_ops.init_model(model_name=model_name)
+    mlflow.set_experiment(config.EXPERIMENT) 
     mlflow.start_run()
     trainer = None
     for d_name in config.DPO_DATASETS_LIST:

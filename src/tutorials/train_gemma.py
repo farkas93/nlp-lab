@@ -4,21 +4,6 @@ max_seq_length = 1024
 
 
 OUT_MODEL_NAME = "gemma-3-1b-it-grpo-ft-gsm8k"
-fourbit_models = [
-    # 4bit dynamic quants for superior accuracy and low memory use
-    "unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
-    "unsloth/gemma-3-4b-it-unsloth-bnb-4bit",
-    "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
-    "unsloth/gemma-3-27b-it-unsloth-bnb-4bit",
-
-    # Other popular models!
-    "unsloth/Llama-3.1-8B",
-    "unsloth/Llama-3.2-3B",
-    "unsloth/Llama-3.3-70B",
-    "unsloth/mistral-7b-instruct-v0.3",
-    "unsloth/Phi-4",
-] # More models at https://huggingface.co/unsloth
-
 model, tokenizer = FastModel.from_pretrained(
     model_name = "unsloth/gemma-3-1b-it",
     max_seq_length = max_seq_length, # Choose any for long context!
@@ -93,8 +78,8 @@ match_format = re.compile(
 )
 
 test_re = match_format.search(
-    "<start_working_out>Let me think!<end_working_out>"\
-    "<SOLUTION>2</SOLUTION>",
+    f"{reasoning_start}Let me think!{reasoning_end}"\
+    f"{solution_start}2{solution_end}",
 )
 print(test_re)
 

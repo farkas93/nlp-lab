@@ -1,3 +1,4 @@
+from unsloth import FastModel
 import torch
 import config
 import logging
@@ -18,6 +19,31 @@ def init_model(model_name : str):
     model.config.pad_token_id = config.TOKENIZER.pad_token_id
     model.config.use_cache = False # Gradient checkpointing is used by default but not compatible with caching
     return model
+
+
+def init_unsloth_model(model_name : str):    
+    model, tokenizer = FastModel.from_pretrained(
+        model_name = model_name,
+        load_in_4bit = False,  # 4 bit quantization to reduce memory
+        load_in_8bit = False, # [NEW!] A bit more accurate, uses 2x memory
+        full_finetuning = False, # [NEW!] We have full finetuning now!
+        # token = "hf_...", # use one if using gated models
+    )
+
+    model = FastModel.get_peft_model(
+        model,
+        finetune_vision_layers     = False, # Turn off for just text!
+        finetune_language_layers   = True,  # Should leave on!
+        finetune_attention_modules = True,  # Attention good for GRPO
+        finetune_mlp_modules       = True,  # SHould leave on always!
+
+        r = 8,           # Larger = higher accuracy, but might overfit
+        lora_alpha = 8,  # Recommended alpha == r at least
+        lora_dropout = 0,
+        bias = "none",
+        random_state = 3407,
+    )
+    return model, tokenizer
 
 def write_model_and_upload(peft_chkpt:str, out_dir:str, repo_name:str):
     #TODO: This look super wrong

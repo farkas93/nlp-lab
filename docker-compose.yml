@@ -1,6 +1,6 @@
 services:
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.14.3
+    image: ghcr.io/mlflow/mlflow:latest
     container_name: mlflow-container
     environment:
       - TZ=UTC

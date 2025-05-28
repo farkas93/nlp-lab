@@ -1,25 +1,35 @@
 from peft import LoraConfig, PeftModel
 from huggingface_hub import login
 from transformers import AutoTokenizer, BitsAndBytesConfig
-from data_etl import (ai2_arc, blebele, orca, squad_v2, ultrachat)
+from data_etl import (ai2_arc, blebele, orca, squad_v2, ultrachat, gsm8k)
 import logging
 import torch
 import os
+from dotenv import load_dotenv
+
+# Get parent directory path
+parent_dir = os.path.dirname(os.path.dirname(__file__))
+env_path = os.path.join(parent_dir, '.env')
+print(env_path)
+load_dotenv(env_path)
+print(os.environ.get("HF_HUB_TOKEN"))
+print(os.environ.get("MLFLOW_TRACKING_URI"))
 login(token=os.environ.get("HF_HUB_TOKEN"))
 
 # Models, checkpoints and outputs
 ######################################
-EXPERIMENT="gemma_dpo_rag"
+EXPERIMENT="gemma_3_grpo"
 VERSION="v1"
 
-BASE_MODEL="zskalo/gemma-1.1-2b-it-rag-sft"
-NEW_MODEL_NAME="gemma-1.1-2b-it-32k-rag"
+BASE_MODEL="unsloth/gemma-3-4b-it-GGUF"
+NEW_MODEL_NAME="gemma-3-1b-it-grpo-ft-gsm8k"
 
-RESUME_CHECKPOINT = True
-CHECKPOINT_DIR = "./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-32k-rag-rag-v1/Intel_orca_dpo_pairs/checkpoint-2500"
+RESUME_CHECKPOINT = False
+CHECKPOINT_DIR = ""#"./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-32k-rag-rag-v1/Intel_orca_dpo_pairs/checkpoint-2500"
 
 OUTPUT_DIR_SFT=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-rag-sft-v2"
 OUTPUT_DIR_DPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-{VERSION}"
+OUTPUT_DIR_GRPO=f"./outputs/{EXPERIMENT}_{VERSION}/{NEW_MODEL_NAME}-{VERSION}"
 
 DATA_CACHE_DIR="./data"
 HF_MODEL_CACHE_DIR="./hf_models"
@@ -27,6 +37,7 @@ HF_MODEL_CACHE_DIR="./hf_models"
 # Training parameters
 ######################################
 NUM_EPOCHS = 1
+MAX_SEQ_LEN = 1024
 MAX_TRAIN_SAMPLES_IN_MEMORY=10000
 DEFAULT_BATCH_SIZE = 4
 BNB_CONF = BitsAndBytesConfig(
@@ -94,7 +105,6 @@ SFT_DATASETS_LIST = [
 
 # DPO Datasets
 ######################################
-
 DPO_DATASETS = {
     "Intel/orca_dpo_pairs" : { 
         "max_seq_len": 32768, 
@@ -116,6 +126,26 @@ DPO_DATASETS = {
 DPO_DATASETS_LIST = ["Intel/orca_dpo_pairs",
                      "allenai/ultrafeedback_binarized_cleaned"]
 
+
+# GRPO Datasets
+######################################
+from rewards.gsm8k import GSM8KRewards
+reasoning_start = "<think>"
+reasoning_end   = "</think>"
+solution_start = "<SOLUTION>"
+solution_end = "</SOLUTION>"
+SYSP = f"""Your name is ELIZA and you are a helpful assistant to Zsombor Kalotay.
+        Provide your solution between {solution_start}{solution_end}"""
+GRPO_REWARD = GSM8KRewards(reasoning_start, reasoning_end, solution_start, solution_end)
+GRPO_DATASETS = {
+    "openai/gsm8k" : { 
+        "max_seq_len": 1024, 
+        "splits": ["train", "test"], 
+        "subsets": ['default'],
+        "formatter": lambda x : gsm8k.format_for_grpo(x, GRPO_REWARD)
+        },
+    }
+GRPO_DATASETS_LIST = ["openai/gsm8k"]
 
 # Tokenizer
 ######################################
