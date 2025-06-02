@@ -1,6 +1,5 @@
 import streamlit as st
 import torch
-from unsloth import FastModel
 import pandas as pd
 import os
 import json

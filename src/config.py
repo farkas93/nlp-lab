@@ -18,11 +18,11 @@ login(token=os.environ.get("HF_HUB_TOKEN"))
 
 # Models, checkpoints and outputs
 ######################################
-EXPERIMENT="gemma_3_grpo"
+EXPERIMENT="qwen_2.5_grpo"
 VERSION="v1"
 
-BASE_MODEL="unsloth/gemma-3-4b-it-GGUF"
-NEW_MODEL_NAME="gemma-3-1b-it-grpo-ft-gsm8k"
+BASE_MODEL= "Qwen/Qwen2.5-0.5B-Instruct"
+NEW_MODEL_NAME="Qwen2.5-0.5B-grpo-ft-gsm8k"
 
 RESUME_CHECKPOINT = False
 CHECKPOINT_DIR = ""#"./outputs/gemma_dpo_rag_v1/gemma-1.1-2b-it-32k-rag-rag-v1/Intel_orca_dpo_pairs/checkpoint-2500"
@@ -40,21 +40,26 @@ NUM_EPOCHS = 1
 MAX_SEQ_LEN = 1024
 MAX_TRAIN_SAMPLES_IN_MEMORY=10000
 DEFAULT_BATCH_SIZE = 4
-BNB_CONF = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=getattr(torch, "float16"),
-            bnb_4bit_use_double_quant=True,
-    )
 
-PEFT_CONF = LoraConfig(
-        lora_alpha=16,
-        lora_dropout=0.05,
-        r=16,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules= ['k_proj', 'q_proj', 'v_proj', 'o_proj', "gate_proj", "down_proj", "up_proj"]
-)
+SAVE_LORA = False
+
+BNB_CONF = None
+# BNB_CONF = BitsAndBytesConfig(
+#             load_in_4bit=True,
+#             bnb_4bit_quant_type="nf4",
+#             bnb_4bit_compute_dtype=getattr(torch, "float16"),
+#             bnb_4bit_use_double_quant=True,
+#     )
+
+PEFT_CONF = None
+# PEFT_CONF = LoraConfig(
+#         lora_alpha=16,
+#         lora_dropout=0.05,
+#         r=16,
+#         bias="none",
+#         task_type="CAUSAL_LM",
+#         target_modules= ['k_proj', 'q_proj', 'v_proj', 'o_proj', "gate_proj", "down_proj", "up_proj"]
+# )
 
 
 # SFT Datasets
@@ -135,7 +140,8 @@ reasoning_end   = "</think>"
 solution_start = "<SOLUTION>"
 solution_end = "</SOLUTION>"
 SYSP = f"""Your name is ELIZA and you are a helpful assistant to Zsombor Kalotay.
-        Provide your solution between {solution_start}{solution_end}"""
+        If you are asked to solve a logical task, provide your solution between {solution_start}{solution_end}.
+        If you need to think about how to solve the problem, provide your thought process between {reasoning_start}{reasoning_end}"""
 GRPO_REWARD = GSM8KRewards(reasoning_start, reasoning_end, solution_start, solution_end)
 GRPO_DATASETS = {
     "openai/gsm8k" : { 

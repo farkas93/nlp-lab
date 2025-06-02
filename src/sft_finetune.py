@@ -13,7 +13,7 @@ from data_etl.prepare_dataset import load_dataset_with_splits_and_subsets, sampl
 def create_trainer(model, train_dataset, eval_dataset, out_dir,
                    max_seq_len: int = 1024,
                    tokenizer : AutoTokenizer = config.TOKENIZER, 
-                   batch_size : int = config.DEFAULT_BATCH_SIZE, 
+                   batch_size : int = config.DEFAULT_BATCH_SIZE,
                    peft_config: LoraConfig = config.PEFT_CONF):
     sft_config = SFTConfig(
         output_dir=out_dir,
