@@ -32,6 +32,6 @@ hub:
   repo_name:
 
 tracking:
-  mlflow_tracking_uri: http://127.0.0.1:55000
+  mlflow_tracking_uri: https://mlflow.chezombor.com/
 
 hf_model_cache_dir: ./hf_models

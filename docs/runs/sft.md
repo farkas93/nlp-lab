@@ -5,6 +5,7 @@
 1. `build_general_sft_dataset` has produced a manifest and Parquet splits.
 2. `.env` exists and contains model, tracking, and storage credentials.
 3. YAML run config points to the correct dataset manifest URI.
+4. `uv` is installed and Python 3.12 is available.
 
 ## Minimal run
 
@@ -12,10 +13,12 @@
 ./start_sft.sh configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
+`start_sft.sh` uses `uv run --python 3.12 ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
+
 Equivalent direct command:
 
 ```bash
-python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Config fields

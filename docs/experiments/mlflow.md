@@ -2,6 +2,8 @@
 
 `nlp-lab` uses MLflow as the source of truth for experiment lineage.
 
+Default tracking target is `https://mlflow.chezombor.com/`.
+
 ## Required run parameters
 
 Every SFT run must log:

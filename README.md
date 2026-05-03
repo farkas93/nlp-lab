@@ -23,7 +23,7 @@ cp .env.template .env
 Important variables:
 
 - `HF_HUB_TOKEN` for model download/upload
-- `MLFLOW_TRACKING_URI` (default local compose: `http://127.0.0.1:55000`)
+- `MLFLOW_TRACKING_URI` (default: `https://mlflow.chezombor.com/`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION` for `s3://` dataset manifests
 
 ## SFT config
@@ -42,11 +42,13 @@ See full runbook: `docs/runs/sft.md`.
 
 ## Run SFT
 
-Start MLflow and run training:
+Run training via `uv` (Python 3.12):
 
 ```bash
 ./start_sft.sh
 ```
+
+`start_sft.sh` only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
 
 Run with custom config path:
 
@@ -57,7 +59,7 @@ Run with custom config path:
 Direct Python command:
 
 ```bash
-python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Dataset contract expectations
