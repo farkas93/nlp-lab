@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,9 @@ class SFTManifestLoadResult:
     manifest: dict[str, Any]
     manifest_uri: str
     manifest_sha256: str
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _s3_storage_options() -> dict[str, Any]:
@@ -123,12 +127,83 @@ def load_sft_manifest_dataset(
     )
 
 
-def tokenize_with_assistant_only_loss(dataset: Dataset, tokenizer, max_seq_len: int) -> Dataset:
+def _truncate_text(value: str, limit: int = 240) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit] + "..."
+
+
+def _build_template_debug_payload(
+    *,
+    split_name: str,
+    example: dict[str, Any],
+    prompt_messages: list[dict[str, str]],
+    target_text: str,
+    reason: str,
+    error: Exception | None = None,
+) -> dict[str, Any]:
+    role_sequence = [msg.get("role") for msg in prompt_messages]
+    last_non_system_role = None
+    for msg in reversed(prompt_messages):
+        role = msg.get("role")
+        if role != "system":
+            last_non_system_role = role
+            break
+
+    tail_preview = [
+        {
+            "role": msg.get("role"),
+            "content": _truncate_text(msg.get("content") or ""),
+        }
+        for msg in prompt_messages[-3:]
+    ]
+
+    payload: dict[str, Any] = {
+        "split": split_name,
+        "reason": reason,
+        "example_id": example.get("example_id"),
+        "session_id": example.get("session_id"),
+        "target_turn_index": example.get("target_turn_index"),
+        "message_count": len(prompt_messages),
+        "role_sequence": role_sequence,
+        "last_non_system_role": last_non_system_role,
+        "target_preview": _truncate_text(target_text),
+        "messages_tail": tail_preview,
+    }
+    if error is not None:
+        payload["error_type"] = error.__class__.__name__
+        payload["error"] = str(error)
+    return payload
+
+
+def tokenize_with_assistant_only_loss(
+    dataset: Dataset,
+    tokenizer,
+    max_seq_len: int,
+    *,
+    split_name: str = "unknown",
+    fail_on_template_error: bool = False,
+) -> Dataset:
     def _tokenize(example: dict[str, Any]) -> dict[str, Any]:
         messages = example.get("messages")
         target_text = example.get("target_text")
         if not isinstance(messages, list) or not isinstance(target_text, str):
-            raise ValueError("Row must include 'messages' (list) and 'target_text' (str)")
+            payload = _build_template_debug_payload(
+                split_name=split_name,
+                example=example,
+                prompt_messages=[],
+                target_text=target_text if isinstance(target_text, str) else "",
+                reason="invalid_row_shape",
+            )
+            LOGGER.warning("Dropping SFT row: %s", json.dumps(payload, ensure_ascii=True))
+            return {
+                "__drop__": 1,
+                "__drop_reason": "invalid_row_shape",
+                "input_ids": [],
+                "attention_mask": [],
+                "labels": [],
+            }
 
         prompt_messages = []
         for item in messages:
@@ -141,20 +216,75 @@ def tokenize_with_assistant_only_loss(dataset: Dataset, tokenizer, max_seq_len: 
             prompt_messages.append({"role": role, "content": content})
 
         if not prompt_messages:
-            raise ValueError("No prompt messages available for tokenization")
+            payload = _build_template_debug_payload(
+                split_name=split_name,
+                example=example,
+                prompt_messages=prompt_messages,
+                target_text=target_text,
+                reason="empty_prompt_messages",
+            )
+            LOGGER.warning("Dropping SFT row: %s", json.dumps(payload, ensure_ascii=True))
+            return {
+                "__drop__": 1,
+                "__drop_reason": "empty_prompt_messages",
+                "input_ids": [],
+                "attention_mask": [],
+                "labels": [],
+            }
+
+        has_user_query = any(
+            msg.get("role") == "user" and isinstance(msg.get("content"), str) and msg.get("content").strip()
+            for msg in prompt_messages
+        )
+        if not has_user_query:
+            payload = _build_template_debug_payload(
+                split_name=split_name,
+                example=example,
+                prompt_messages=prompt_messages,
+                target_text=target_text,
+                reason="missing_user_query",
+            )
+            LOGGER.warning("Dropping SFT row: %s", json.dumps(payload, ensure_ascii=True))
+            return {
+                "__drop__": 1,
+                "__drop_reason": "missing_user_query",
+                "input_ids": [],
+                "attention_mask": [],
+                "labels": [],
+            }
 
         full_messages = prompt_messages + [{"role": "assistant", "content": target_text}]
 
-        prompt_text = tokenizer.apply_chat_template(
-            prompt_messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        full_text = tokenizer.apply_chat_template(
-            full_messages,
-            tokenize=False,
-            add_generation_prompt=False,
-        )
+        try:
+            prompt_text = tokenizer.apply_chat_template(
+                prompt_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            full_text = tokenizer.apply_chat_template(
+                full_messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+        except Exception as exc:
+            payload = _build_template_debug_payload(
+                split_name=split_name,
+                example=example,
+                prompt_messages=prompt_messages,
+                target_text=target_text,
+                reason="chat_template_error",
+                error=exc,
+            )
+            LOGGER.warning("Dropping SFT row: %s", json.dumps(payload, ensure_ascii=True))
+            if fail_on_template_error:
+                raise
+            return {
+                "__drop__": 1,
+                "__drop_reason": "chat_template_error",
+                "input_ids": [],
+                "attention_mask": [],
+                "labels": [],
+            }
 
         if callable(tokenizer):
             prompt_encoded = tokenizer(prompt_text, add_special_tokens=False)
@@ -181,9 +311,36 @@ def tokenize_with_assistant_only_loss(dataset: Dataset, tokenizer, max_seq_len: 
             labels[idx] = -100
 
         return {
+            "__drop__": 0,
+            "__drop_reason": "",
             "input_ids": full_ids,
             "attention_mask": attention_mask,
             "labels": labels,
         }
 
-    return dataset.map(_tokenize, remove_columns=dataset.column_names)
+    tokenized = dataset.map(_tokenize)
+
+    reasons = tokenized["__drop_reason"] if "__drop_reason" in tokenized.column_names else []
+    dropped_by_reason: dict[str, int] = {}
+    for reason in reasons:
+        if not reason:
+            continue
+        dropped_by_reason[reason] = dropped_by_reason.get(reason, 0) + 1
+
+    filtered = tokenized.filter(lambda row: row["__drop__"] == 0)
+    dropped_count = len(tokenized) - len(filtered)
+    if dropped_count > 0:
+        LOGGER.warning(
+            "Dropped %s/%s rows during assistant-only tokenization for split=%s reasons=%s",
+            dropped_count,
+            len(tokenized),
+            split_name,
+            json.dumps(dropped_by_reason, ensure_ascii=True, sort_keys=True),
+        )
+
+    remove_columns = [
+        column
+        for column in filtered.column_names
+        if column not in {"input_ids", "attention_mask", "labels"}
+    ]
+    return filtered.remove_columns(remove_columns)

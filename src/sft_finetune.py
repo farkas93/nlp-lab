@@ -93,11 +93,13 @@ def main() -> None:
         dataset_result.train_dataset,
         tokenizer=tokenizer,
         max_seq_len=run_config.model.max_seq_len,
+        split_name=run_config.data.train_split,
     )
     eval_dataset = tokenize_with_assistant_only_loss(
         dataset_result.eval_dataset,
         tokenizer=tokenizer,
         max_seq_len=run_config.model.max_seq_len,
+        split_name=run_config.data.eval_split,
     )
 
     model = model_ops.init_model_for_sft(
