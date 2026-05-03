@@ -145,7 +145,6 @@ def main() -> None:
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
             data_collator=data_collator,
         )
         trainer.train()
