@@ -8,6 +8,7 @@ from pathlib import Path
 import mlflow
 import torch
 from huggingface_hub import login
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
 
 import model_ops
@@ -119,6 +120,19 @@ def main() -> None:
         use_bf16=run_config.model.use_bf16,
     )
 
+    if run_config.model.load_in_4bit:
+        model = prepare_model_for_kbit_training(model)
+        peft_config = LoraConfig(
+            r=run_config.model.lora_r,
+            lora_alpha=run_config.model.lora_alpha,
+            lora_dropout=run_config.model.lora_dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=list(run_config.model.lora_target_modules),
+        )
+        model = get_peft_model(model, peft_config)
+        logging.info("Attached LoRA adapters for 4-bit training")
+
     training_args = TrainingArguments(
         output_dir=run_config.training.output_dir,
         per_device_train_batch_size=run_config.training.train_batch_size,
@@ -151,6 +165,11 @@ def main() -> None:
         mlflow.log_param("assistant_only_loss", True)
         mlflow.log_param("load_in_4bit", run_config.model.load_in_4bit)
         mlflow.log_param("gradient_checkpointing", run_config.training.gradient_checkpointing)
+        if run_config.model.load_in_4bit:
+            mlflow.log_param("lora_r", run_config.model.lora_r)
+            mlflow.log_param("lora_alpha", run_config.model.lora_alpha)
+            mlflow.log_param("lora_dropout", run_config.model.lora_dropout)
+            mlflow.log_param("lora_target_modules", ",".join(run_config.model.lora_target_modules))
 
         trainer = Trainer(
             model=model,

@@ -28,6 +28,7 @@ uv run --python 3.12 python src/sft_finetune.py --config configs/sft_general_qwe
 - `model.model_name`: base model HF repo, example `Qwen/Qwen3.5-0.8B`
 - `model.max_seq_len`: max tokenized sequence length
 - `model.load_in_4bit`: set `true` for lower VRAM footprint on constrained GPUs
+- `model.lora_*`: LoRA adapter config used when `load_in_4bit=true`
 - `training.*`: output directory, learning rate, epochs, batch sizes
 - `training.gradient_checkpointing`: enable to reduce activation memory
 - `tracking.mlflow_tracking_uri`: optional override for tracking backend

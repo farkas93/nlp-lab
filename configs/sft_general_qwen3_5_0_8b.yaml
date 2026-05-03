@@ -10,6 +10,10 @@ model:
   max_seq_len: 1024
   use_bf16: true
   load_in_4bit: true
+  lora_r: 16
+  lora_alpha: 16
+  lora_dropout: 0.05
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
 training:
   experiment_name: qwen3_5_0_8b_general_sft

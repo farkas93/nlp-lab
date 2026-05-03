@@ -23,6 +23,18 @@ class SFTModelConfig:
     max_seq_len: int = 2048
     use_bf16: bool = True
     load_in_4bit: bool = False
+    lora_r: int = 16
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    lora_target_modules: tuple[str, ...] = (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    )
 
 
 @dataclass
@@ -106,6 +118,23 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         max_seq_len=int(model_raw.get("max_seq_len", 2048)),
         use_bf16=bool(model_raw.get("use_bf16", True)),
         load_in_4bit=bool(model_raw.get("load_in_4bit", False)),
+        lora_r=int(model_raw.get("lora_r", 16)),
+        lora_alpha=int(model_raw.get("lora_alpha", 16)),
+        lora_dropout=float(model_raw.get("lora_dropout", 0.05)),
+        lora_target_modules=tuple(
+            model_raw.get(
+                "lora_target_modules",
+                [
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
+            )
+        ),
     )
 
     training = SFTTrainingConfig(
