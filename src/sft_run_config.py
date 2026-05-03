@@ -41,6 +41,7 @@ class SFTTrainingConfig:
     warmup_steps: int = 30
     lr_scheduler_type: str = "linear"
     seed: int = 42
+    gradient_checkpointing: bool = True
 
 
 @dataclass
@@ -122,6 +123,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         warmup_steps=int(training_raw.get("warmup_steps", 30)),
         lr_scheduler_type=str(training_raw.get("lr_scheduler_type", "linear")),
         seed=int(training_raw.get("seed", 42)),
+        gradient_checkpointing=bool(training_raw.get("gradient_checkpointing", True)),
     )
 
     hub = SFTHubConfig(

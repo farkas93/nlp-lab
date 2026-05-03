@@ -7,9 +7,9 @@ data:
 
 model:
   model_name: Qwen/Qwen3.5-0.8B
-  max_seq_len: 2048
+  max_seq_len: 1024
   use_bf16: true
-  load_in_4bit: false
+  load_in_4bit: true
 
 training:
   experiment_name: qwen3_5_0_8b_general_sft
@@ -17,15 +17,16 @@ training:
   output_dir: ./outputs/qwen3_5_0_8b/general_sft_v1
   num_train_epochs: 1
   learning_rate: 2.0e-5
-  train_batch_size: 2
-  eval_batch_size: 2
-  gradient_accumulation_steps: 1
+  train_batch_size: 1
+  eval_batch_size: 1
+  gradient_accumulation_steps: 8
   logging_steps: 20
   save_strategy: epoch
   eval_strategy: epoch
   warmup_steps: 30
   lr_scheduler_type: linear
   seed: 42
+  gradient_checkpointing: true
 
 hub:
   push_to_hub: false

@@ -10,6 +10,7 @@ if [ -f ".env" ]; then
 fi
 
 MLFLOW_URI="${MLFLOW_TRACKING_URI:-https://mlflow.chezombor.com/}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 is_local_mlflow() {
   case "$1" in

@@ -8,7 +8,7 @@ from pathlib import Path
 import mlflow
 import torch
 from huggingface_hub import login
-from transformers import AutoTokenizer, Trainer, TrainingArguments
+from transformers import AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
 
 import model_ops
 from sft_dataset_loader import load_sft_manifest_dataset, tokenize_with_assistant_only_loss
@@ -81,6 +81,15 @@ def main() -> None:
     tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = "left"
 
+    quantization_config = None
+    if run_config.model.load_in_4bit:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16 if run_config.model.use_bf16 else torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+
     dataset_result = load_sft_manifest_dataset(
         manifest_uri=run_config.data.dataset_manifest_uri,
         train_split=run_config.data.train_split,
@@ -106,7 +115,7 @@ def main() -> None:
         model_name=run_config.model.model_name,
         cache_dir=run_config.hf_model_cache_dir,
         tokenizer=tokenizer,
-        quantization_config=None,
+        quantization_config=quantization_config,
         use_bf16=run_config.model.use_bf16,
     )
 
@@ -125,6 +134,7 @@ def main() -> None:
         report_to=["mlflow"],
         bf16=run_config.model.use_bf16,
         seed=run_config.training.seed,
+        gradient_checkpointing=run_config.training.gradient_checkpointing,
     )
 
     data_collator = AssistantOnlyDataCollator(tokenizer=tokenizer)
@@ -139,6 +149,8 @@ def main() -> None:
         mlflow.log_param("model_name", run_config.model.model_name)
         mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
         mlflow.log_param("assistant_only_loss", True)
+        mlflow.log_param("load_in_4bit", run_config.model.load_in_4bit)
+        mlflow.log_param("gradient_checkpointing", run_config.training.gradient_checkpointing)
 
         trainer = Trainer(
             model=model,
