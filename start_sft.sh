@@ -26,4 +26,4 @@ else
 fi
 
 echo "Running SFT with uv (Python 3.12) using config: ${CONFIG_PATH}"
-uv run --python 3.12 python src/sft_finetune.py --config "$CONFIG_PATH"
+uv run --python 3.12 --with-requirements requirements.txt python src/sft_finetune.py --config "$CONFIG_PATH"

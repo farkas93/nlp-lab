@@ -59,7 +59,7 @@ Run with custom config path:
 Direct Python command:
 
 ```bash
-uv run --python 3.12 python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.txt python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Dataset contract expectations

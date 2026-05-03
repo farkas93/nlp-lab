@@ -13,7 +13,7 @@
 ./start_sft.sh configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
-`start_sft.sh` uses `uv run --python 3.12 ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
+`start_sft.sh` uses `uv run --python 3.12 --with-requirements requirements.txt ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
 
 Equivalent direct command:
 
