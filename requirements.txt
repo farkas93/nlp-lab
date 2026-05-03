@@ -10,3 +10,6 @@ mlflow
 python-dotenv
 bitsandbytes==0.46.0
 huggingface_hub
+PyYAML
+pyarrow
+s3fs
