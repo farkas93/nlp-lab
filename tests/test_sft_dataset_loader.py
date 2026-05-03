@@ -29,6 +29,9 @@ class _DummyTokenizer:
         tokens = [ord(ch) % 97 + 1 for ch in text]
         return tokens if tokenize else text
 
+    def encode(self, text, add_special_tokens=False):
+        return [ord(ch) % 97 + 1 for ch in text]
+
 
 class SFTDatasetLoaderTests(unittest.TestCase):
     def test_load_manifest_dataset_local_parquet(self) -> None:

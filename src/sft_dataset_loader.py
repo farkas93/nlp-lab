@@ -145,22 +145,37 @@ def tokenize_with_assistant_only_loss(dataset: Dataset, tokenizer, max_seq_len: 
 
         full_messages = prompt_messages + [{"role": "assistant", "content": target_text}]
 
-        prompt_ids = tokenizer.apply_chat_template(
+        prompt_text = tokenizer.apply_chat_template(
             prompt_messages,
-            tokenize=True,
+            tokenize=False,
             add_generation_prompt=True,
         )
-        full_ids = tokenizer.apply_chat_template(
+        full_text = tokenizer.apply_chat_template(
             full_messages,
-            tokenize=True,
+            tokenize=False,
             add_generation_prompt=False,
         )
 
-        if len(full_ids) > max_seq_len:
-            full_ids = full_ids[-max_seq_len:]
-        attention_mask = [1] * len(full_ids)
+        if callable(tokenizer):
+            prompt_encoded = tokenizer(prompt_text, add_special_tokens=False)
+            full_encoded = tokenizer(full_text, add_special_tokens=False)
+            prompt_ids = prompt_encoded["input_ids"]
+            full_ids = full_encoded["input_ids"]
+        else:
+            prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
+            full_ids = tokenizer.encode(full_text, add_special_tokens=False)
+
+        if not isinstance(prompt_ids, list) or not isinstance(full_ids, list):
+            raise ValueError("Tokenizer returned non-list input_ids")
 
         prompt_len = min(len(prompt_ids), len(full_ids))
+
+        if len(full_ids) > max_seq_len:
+            overflow = len(full_ids) - max_seq_len
+            full_ids = full_ids[overflow:]
+            prompt_len = max(0, prompt_len - overflow)
+
+        attention_mask = [1] * len(full_ids)
         labels = full_ids.copy()
         for idx in range(prompt_len):
             labels[idx] = -100
