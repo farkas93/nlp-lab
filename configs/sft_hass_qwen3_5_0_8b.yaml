@@ -4,6 +4,7 @@ data:
   eval_split: eval
   max_train_samples:
   max_eval_samples:
+  cache_mode: refresh
 
 model:
   model_name: Qwen/Qwen3.5-0.8B
@@ -16,6 +17,7 @@ model:
   lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
 training:
+  backend: trl 
   experiment_name: qwen3_5_0_8b_hass_sft
   run_name: hass_sft_v1.0.0
   output_dir: ./outputs/qwen3_5_0_8b/hass_sft_v1.0.0
@@ -35,8 +37,10 @@ training:
 hub:
   push_to_hub: true
   repo_name: zskalo/qwen3.5-0.8b-lora-hass-tools
+  adapter_tag: v1.0.0
   full_model: true
   full_model_repo_name: zskalo/qwen3.5-0.8b-hass-tools
+  full_model_tag: v1.0.0
 
 
 tracking:
