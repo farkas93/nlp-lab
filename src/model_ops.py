@@ -70,10 +70,43 @@ def save_model_and_maybe_push(
     output_dir: str,
     push_to_hub: bool,
     repo_name: str | None,
+    full_model: bool = False,
+    full_model_repo_name: str | None = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     model.save_pretrained(output_dir, safe_serialization=True, max_shard_size="4GB")
     tokenizer.save_pretrained(output_dir)
+
+    if push_to_hub and not repo_name:
+        raise ValueError("hub.push_to_hub=true requires hub.repo_name")
+
     if push_to_hub and repo_name:
         model.push_to_hub(repo_name)
         tokenizer.push_to_hub(repo_name)
+
+    if not full_model:
+        return
+
+    merge_fn = getattr(model, "merge_and_unload", None)
+    if not callable(merge_fn):
+        raise ValueError(
+            "hub.full_model=true requested, but current model is not mergeable "
+            "(missing merge_and_unload)."
+        )
+
+    merged_dir = f"{output_dir}_merged"
+    os.makedirs(merged_dir, exist_ok=True)
+    logging.info("Merging adapter into base model for full-model export")
+    merged_model = merge_fn()
+    merged_model.save_pretrained(merged_dir, safe_serialization=True, max_shard_size="4GB")
+    tokenizer.save_pretrained(merged_dir)
+
+    if push_to_hub:
+        merged_repo = full_model_repo_name or (f"{repo_name}-merged" if repo_name else None)
+        if not merged_repo:
+            raise ValueError(
+                "Unable to resolve merged model repository name. "
+                "Set hub.full_model_repo_name or hub.repo_name."
+            )
+        merged_model.push_to_hub(merged_repo)
+        tokenizer.push_to_hub(merged_repo)
