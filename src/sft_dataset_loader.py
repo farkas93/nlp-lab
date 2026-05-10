@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import fsspec
-from datasets import Dataset, load_dataset
+from datasets import Dataset, DownloadMode, load_dataset
 
 
 @dataclass
@@ -92,6 +92,7 @@ def load_sft_manifest_dataset(
     eval_split: str,
     max_train_samples: int | None,
     max_eval_samples: int | None,
+    cache_mode: str = "reuse",
 ) -> SFTManifestLoadResult:
     manifest, manifest_sha256 = _load_manifest(manifest_uri)
 
@@ -105,10 +106,15 @@ def load_sft_manifest_dataset(
     train_uris = [_resolve_split_file_uri(manifest_uri, key) for key in train_files]
     eval_uris = [_resolve_split_file_uri(manifest_uri, key) for key in eval_files]
 
+    download_mode = DownloadMode.REUSE_DATASET_IF_EXISTS
+    if cache_mode == "refresh":
+        download_mode = DownloadMode.FORCE_REDOWNLOAD
+
     dataset_dict = load_dataset(
         "parquet",
         data_files={"train": train_uris, "eval": eval_uris},
         storage_options=_s3_storage_options(),
+        download_mode=download_mode,
     )
     train_dataset = dataset_dict["train"]
     eval_dataset = dataset_dict["eval"]
@@ -185,10 +191,34 @@ def tokenize_with_assistant_only_loss(
     split_name: str = "unknown",
     fail_on_template_error: bool = False,
 ) -> Dataset:
+    def _normalize_chat_message(item: Any) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        role = item.get("role")
+        content = item.get("content")
+        if not isinstance(role, str) or not isinstance(content, str):
+            return None
+        message: dict[str, Any] = {"role": role, "content": content}
+        tool_calls = item.get("tool_calls")
+        if isinstance(tool_calls, list):
+            message["tool_calls"] = tool_calls
+        tool_name = item.get("tool_name")
+        if isinstance(tool_name, str) and tool_name.strip():
+            message["tool_name"] = tool_name.strip()
+            message["name"] = tool_name.strip()
+        name = item.get("name")
+        if isinstance(name, str) and name.strip():
+            message["name"] = name.strip()
+        return message
+
     def _tokenize(example: dict[str, Any]) -> dict[str, Any]:
         messages = example.get("messages")
         target_text = example.get("target_text")
-        if not isinstance(messages, list) or not isinstance(target_text, str):
+        target_message = example.get("target_message")
+        target_message_normalized = _normalize_chat_message(target_message)
+        if not isinstance(messages, list) or (
+            not isinstance(target_text, str) and target_message_normalized is None
+        ):
             payload = _build_template_debug_payload(
                 split_name=split_name,
                 example=example,
@@ -207,13 +237,10 @@ def tokenize_with_assistant_only_loss(
 
         prompt_messages = []
         for item in messages:
-            if not isinstance(item, dict):
+            normalized = _normalize_chat_message(item)
+            if normalized is None:
                 continue
-            role = item.get("role")
-            content = item.get("content")
-            if not isinstance(role, str) or not isinstance(content, str):
-                continue
-            prompt_messages.append({"role": role, "content": content})
+            prompt_messages.append(normalized)
 
         if not prompt_messages:
             payload = _build_template_debug_payload(
@@ -253,7 +280,14 @@ def tokenize_with_assistant_only_loss(
                 "labels": [],
             }
 
-        full_messages = prompt_messages + [{"role": "assistant", "content": target_text}]
+        if target_message_normalized is not None:
+            assistant_target_message = target_message_normalized
+            effective_target_text = str(assistant_target_message.get("content") or "")
+        else:
+            assistant_target_message = {"role": "assistant", "content": target_text}
+            effective_target_text = target_text
+
+        full_messages = prompt_messages + [assistant_target_message]
 
         try:
             prompt_text = tokenizer.apply_chat_template(
@@ -271,7 +305,7 @@ def tokenize_with_assistant_only_loss(
                 split_name=split_name,
                 example=example,
                 prompt_messages=prompt_messages,
-                target_text=target_text,
+                target_text=effective_target_text,
                 reason="chat_template_error",
                 error=exc,
             )

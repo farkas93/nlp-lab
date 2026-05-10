@@ -95,6 +95,31 @@ class SFTDatasetLoaderTests(unittest.TestCase):
         self.assertEqual(batch["input_ids"].shape[0], 1)
         self.assertEqual(batch["labels"].shape[1], batch["input_ids"].shape[1])
 
+    def test_tokenize_supports_structured_target_message_with_tool_calls(self) -> None:
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "Turn off all lights"},
+                    ],
+                    "target_text": '{"tool_calls":[{"name":"HassTurnOff","arguments":{"domain":"light"}}]}',
+                    "target_message": {
+                        "role": "assistant",
+                        "content": '{"tool_calls":[{"name":"HassTurnOff","arguments":{"domain":"light"}}]}',
+                        "tool_calls": [
+                            {"name": "HassTurnOff", "arguments": {"domain": "light"}}
+                        ],
+                    },
+                }
+            ]
+        )
+
+        tokenized = tokenize_with_assistant_only_loss(ds, tokenizer=tokenizer, max_seq_len=512)
+        self.assertEqual(len(tokenized), 1)
+        row = tokenized[0]
+        self.assertEqual(len(row["input_ids"]), len(row["labels"]))
+
 
 if __name__ == "__main__":
     unittest.main()
