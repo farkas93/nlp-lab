@@ -85,6 +85,21 @@ def _split_files_from_manifest(manifest: dict[str, Any], split_name: str) -> lis
     ]
 
 
+def _load_parquet_split(
+    *,
+    split_uris: list[str],
+    storage_options: dict[str, Any],
+    download_mode: DownloadMode,
+) -> Dataset:
+    return load_dataset(
+        "parquet",
+        data_files=split_uris,
+        split="train",
+        storage_options=storage_options,
+        download_mode=download_mode,
+    )
+
+
 def load_sft_manifest_dataset(
     *,
     manifest_uri: str,
@@ -110,14 +125,17 @@ def load_sft_manifest_dataset(
     if cache_mode == "refresh":
         download_mode = DownloadMode.FORCE_REDOWNLOAD
 
-    dataset_dict = load_dataset(
-        "parquet",
-        data_files={"train": train_uris, "eval": eval_uris},
-        storage_options=_s3_storage_options(),
+    storage_options = _s3_storage_options()
+    train_dataset = _load_parquet_split(
+        split_uris=train_uris,
+        storage_options=storage_options,
         download_mode=download_mode,
     )
-    train_dataset = dataset_dict["train"]
-    eval_dataset = dataset_dict["eval"]
+    eval_dataset = _load_parquet_split(
+        split_uris=eval_uris,
+        storage_options=storage_options,
+        download_mode=download_mode,
+    )
 
     if max_train_samples is not None and len(train_dataset) > max_train_samples:
         train_dataset = train_dataset.select(range(max_train_samples))
@@ -191,6 +209,34 @@ def tokenize_with_assistant_only_loss(
     split_name: str = "unknown",
     fail_on_template_error: bool = False,
 ) -> Dataset:
+    def _normalize_tool_calls(value: Any) -> list[Any] | None:
+        if not isinstance(value, list):
+            return None
+        normalized: list[Any] = []
+        for item in value:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            normalized_item: dict[str, Any] = {}
+            for key, field_value in item.items():
+                if key == "arguments" and isinstance(field_value, (dict, list)):
+                    normalized_item[key] = json.dumps(field_value, ensure_ascii=True, sort_keys=True)
+                    continue
+                if key == "function" and isinstance(field_value, dict):
+                    function_payload = dict(field_value)
+                    function_arguments = function_payload.get("arguments")
+                    if isinstance(function_arguments, (dict, list)):
+                        function_payload["arguments"] = json.dumps(
+                            function_arguments,
+                            ensure_ascii=True,
+                            sort_keys=True,
+                        )
+                    normalized_item[key] = function_payload
+                    continue
+                normalized_item[key] = field_value
+            normalized.append(normalized_item)
+        return normalized
+
     def _normalize_chat_message(item: Any) -> dict[str, Any] | None:
         if not isinstance(item, dict):
             return None
@@ -199,7 +245,7 @@ def tokenize_with_assistant_only_loss(
         if not isinstance(role, str) or not isinstance(content, str):
             return None
         message: dict[str, Any] = {"role": role, "content": content}
-        tool_calls = item.get("tool_calls")
+        tool_calls = _normalize_tool_calls(item.get("tool_calls"))
         if isinstance(tool_calls, list):
             message["tool_calls"] = tool_calls
         tool_name = item.get("tool_name")

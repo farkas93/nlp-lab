@@ -120,6 +120,76 @@ class SFTDatasetLoaderTests(unittest.TestCase):
         row = tokenized[0]
         self.assertEqual(len(row["input_ids"]), len(row["labels"]))
 
+    def test_load_manifest_dataset_supports_different_nested_tool_argument_schemas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            train_path = tmp_path / "train.parquet"
+            eval_path = tmp_path / "eval.parquet"
+            manifest_path = tmp_path / "manifest.json"
+
+            train_row = {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "tool call",
+                        "tool_calls": [
+                            {
+                                "name": "hass_control_light",
+                                "arguments": {
+                                    "action": "off",
+                                    "domain": "light",
+                                    "light_entity_id": "light.kitchen",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "target_text": "done",
+            }
+            eval_row = {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "tool call",
+                        "tool_calls": [
+                            {
+                                "name": "hass_trigger_automation",
+                                "arguments": {
+                                    "action": "trigger",
+                                    "domain": "automation",
+                                    "automation_entity_id": "automation.night",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "target_text": "done",
+            }
+
+            pq.write_table(pa.Table.from_pylist([train_row]), train_path)
+            pq.write_table(pa.Table.from_pylist([eval_row]), eval_path)
+
+            manifest = {
+                "dataset_id": "hass_tools_v2",
+                "dataset_version": "v1.0.0",
+                "splits": [
+                    {"split": "train", "key": str(train_path)},
+                    {"split": "eval", "key": str(eval_path)},
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = load_sft_manifest_dataset(
+                manifest_uri=str(manifest_path),
+                train_split="train",
+                eval_split="eval",
+                max_train_samples=None,
+                max_eval_samples=None,
+            )
+
+            self.assertEqual(len(result.train_dataset), 1)
+            self.assertEqual(len(result.eval_dataset), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
