@@ -1,5 +1,5 @@
 data:
-  dataset_manifest_uri: s3://sft-datasets/dataset_id=general/dataset_version=v1/manifest.json
+  dataset_manifest_uri: s3://sft-datasets/dataset_id=hass_tools_v2/dataset_version=v1.0.0/manifest.json
   train_split: train
   eval_split: eval
   max_train_samples:
@@ -7,7 +7,7 @@ data:
 
 model:
   model_name: Qwen/Qwen3.5-0.8B
-  max_seq_len: 2048
+  max_seq_len: 4092
   use_bf16: true
   load_in_4bit: true
   lora_r: 16
@@ -16,9 +16,9 @@ model:
   lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
 training:
-  experiment_name: qwen3_5_0_8b_general_sft
-  run_name: general_sft_v1
-  output_dir: ./outputs/qwen3_5_0_8b/general_sft_v1
+  experiment_name: qwen3_5_0_8b_hass_sft
+  run_name: hass_sft_v1.0.0
+  output_dir: ./outputs/qwen3_5_0_8b/hass_sft_v1.0.0
   num_train_epochs: 5
   learning_rate: 2.0e-5
   train_batch_size: 1
@@ -33,8 +33,11 @@ training:
   gradient_checkpointing: true
 
 hub:
-  push_to_hub: false
-  repo_name:
+  push_to_hub: true
+  repo_name: zskalo/qwen3.5-0.8b-lora-hass-tools
+  full_model: true
+  full_model_repo_name: zskalo/qwen3.5-0.8b-hass-tools
+
 
 tracking:
   mlflow_tracking_uri: https://mlflow.chezombor.com/
