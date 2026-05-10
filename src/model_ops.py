@@ -2,7 +2,17 @@ import os
 import logging
 
 import torch
+from huggingface_hub import HfApi
 from transformers import AutoModelForCausalLM
+
+
+def _create_hf_tag(*, repo_name: str, tag: str | None) -> None:
+    cleaned_tag = str(tag or "").strip()
+    if not cleaned_tag:
+        return
+    api = HfApi(token=os.getenv("HF_HUB_TOKEN"))
+    api.create_tag(repo_id=repo_name, tag=cleaned_tag, repo_type="model")
+    logging.info("Created HF tag repo=%s tag=%s", repo_name, cleaned_tag)
 
 def init_model(model_name: str):
     import config
@@ -72,6 +82,8 @@ def save_model_and_maybe_push(
     repo_name: str | None,
     full_model: bool = False,
     full_model_repo_name: str | None = None,
+    adapter_tag: str | None = None,
+    full_model_tag: str | None = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     model.save_pretrained(output_dir, safe_serialization=True, max_shard_size="4GB")
@@ -83,6 +95,7 @@ def save_model_and_maybe_push(
     if push_to_hub and repo_name:
         model.push_to_hub(repo_name)
         tokenizer.push_to_hub(repo_name)
+        _create_hf_tag(repo_name=repo_name, tag=adapter_tag)
 
     if not full_model:
         return
@@ -110,3 +123,4 @@ def save_model_and_maybe_push(
             )
         merged_model.push_to_hub(merged_repo)
         tokenizer.push_to_hub(merged_repo)
+        _create_hf_tag(repo_name=merged_repo, tag=full_model_tag)

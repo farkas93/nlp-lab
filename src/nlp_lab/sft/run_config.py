@@ -68,6 +68,8 @@ class SFTHubConfig:
     repo_name: str | None = None
     full_model: bool = False
     full_model_repo_name: str | None = None
+    adapter_tag: str | None = None
+    full_model_tag: str | None = None
 
 
 @dataclass
@@ -186,6 +188,10 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
             str(hub_raw["full_model_repo_name"])
             if hub_raw.get("full_model_repo_name")
             else None
+        ),
+        adapter_tag=(str(hub_raw["adapter_tag"]) if hub_raw.get("adapter_tag") else None),
+        full_model_tag=(
+            str(hub_raw["full_model_tag"]) if hub_raw.get("full_model_tag") else None
         ),
     )
 

@@ -85,6 +85,8 @@ def run_unsloth_training(
         repo_name=run_config.hub.repo_name,
         full_model=run_config.hub.full_model,
         full_model_repo_name=run_config.hub.full_model_repo_name,
+        adapter_tag=run_config.hub.adapter_tag,
+        full_model_tag=run_config.hub.full_model_tag,
     )
 
     mlflow.log_param("backend", "unsloth")

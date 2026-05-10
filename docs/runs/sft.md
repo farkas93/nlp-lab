@@ -43,6 +43,8 @@ uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.
 - `hub.push_to_hub`, `hub.repo_name`: optional publishing
 - `hub.full_model`: merge adapter into a full model export after training
 - `hub.full_model_repo_name`: optional HF repo for merged model (defaults to `<repo_name>-merged`)
+- `hub.adapter_tag`: optional HF git tag to create on adapter repo after publish
+- `hub.full_model_tag`: optional HF git tag to create on merged repo after publish
 
 Example hub config for adapter + merged publish:
 
@@ -52,6 +54,8 @@ hub:
   repo_name: your-org/qwen35-08b-hass-tools-adapter
   full_model: true
   full_model_repo_name: your-org/qwen35-08b-hass-tools-merged
+  adapter_tag: v1.0.0
+  full_model_tag: v1.0.0
 ```
 
 ## Outputs

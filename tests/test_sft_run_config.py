@@ -32,6 +32,8 @@ class SFTRunConfigTests(unittest.TestCase):
             self.assertEqual(config.data.cache_mode, "reuse")
             self.assertFalse(config.hub.full_model)
             self.assertIsNone(config.hub.full_model_repo_name)
+            self.assertIsNone(config.hub.adapter_tag)
+            self.assertIsNone(config.hub.full_model_tag)
 
     def test_unsloth_backend_and_refresh_cache_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +79,8 @@ class SFTRunConfigTests(unittest.TestCase):
                         "  repo_name: user/adapter-repo",
                         "  full_model: true",
                         "  full_model_repo_name: user/full-model-repo",
+                        "  adapter_tag: v1.0.0",
+                        "  full_model_tag: v1.0.0",
                     ]
                 ),
                 encoding="utf-8",
@@ -87,6 +91,8 @@ class SFTRunConfigTests(unittest.TestCase):
             self.assertEqual(config.hub.repo_name, "user/adapter-repo")
             self.assertTrue(config.hub.full_model)
             self.assertEqual(config.hub.full_model_repo_name, "user/full-model-repo")
+            self.assertEqual(config.hub.adapter_tag, "v1.0.0")
+            self.assertEqual(config.hub.full_model_tag, "v1.0.0")
 
 
 if __name__ == "__main__":
