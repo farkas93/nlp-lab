@@ -196,10 +196,7 @@ model = PeftModel.from_pretrained(model, adapter_repo, token=os.getenv("HF_HUB_T
 model = model.merge_and_unload()
 model.save_pretrained(merged_dir, safe_serialization=True, max_shard_size="4GB")
 
-try:
-    tokenizer = AutoTokenizer.from_pretrained(adapter_repo, token=os.getenv("HF_HUB_TOKEN"))
-except Exception:
-    tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
+tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
 tokenizer.save_pretrained(merged_dir)
 PY
 
