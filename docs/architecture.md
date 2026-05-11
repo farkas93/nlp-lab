@@ -23,8 +23,9 @@
 - `configs/`: YAML run configs.
 - `src/eliza_trainer/sft/run_config.py`: YAML config parser and env integration.
 - `src/eliza_trainer/sft/dataset_loader.py`: manifest + Parquet loader bridge.
-- `src/training/loss_masking.py`: assistant-only loss collator.
+- `src/eliza_trainer/losses/loss_masking.py`: assistant-only loss collator.
 - `src/eliza_trainer/sft/train.py`: unified SFT entrypoint (`trl` and `unsloth`).
+- `src/eliza_trainer/rewards/`: reward functions namespace for RL-style trainers.
 - `experiments/legacy_post_training/`: archived legacy DPO/GRPO/ORPO and tutorial scripts.
 
 ## Outputs

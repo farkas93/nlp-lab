@@ -13,7 +13,7 @@ from src.eliza_trainer.sft.dataset_loader import (
     load_sft_manifest_dataset,
     tokenize_with_assistant_only_loss,
 )
-from src.training.loss_masking import AssistantOnlyDataCollator
+from src.eliza_trainer.losses import AssistantOnlyDataCollator
 
 
 class _DummyTokenizer:

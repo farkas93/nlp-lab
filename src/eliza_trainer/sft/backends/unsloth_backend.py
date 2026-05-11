@@ -8,10 +8,10 @@ from transformers import Trainer, TrainingArguments
 
 try:
     from src import model_ops
-    from src.training.loss_masking import AssistantOnlyDataCollator
+    from src.eliza_trainer.losses import AssistantOnlyDataCollator
 except ModuleNotFoundError:  # pragma: no cover - legacy entrypoint compatibility
     import model_ops
-    from training.loss_masking import AssistantOnlyDataCollator
+    from eliza_trainer.losses import AssistantOnlyDataCollator
 
 from ..run_config import SFTRunConfig
 
