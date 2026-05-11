@@ -10,6 +10,22 @@
 - Confirm manifest `splits` contains entries for configured `train_split` and `eval_split`.
 - Confirm each split item has a valid `key`.
 
+## Training still uses old/smaller dataset after manifest overwrite
+
+- Set `data.cache_mode: refresh` for the next run.
+- Prefer versioned dataset paths (`dataset_version=v2`, `v3`, ...) instead of overwriting in place.
+- Compare run param `dataset_manifest_sha256` in MLflow with the expected hash.
+
+## Manifest hash guard fails
+
+- If `data.expected_manifest_sha256` is set, the run fails when loaded manifest content differs.
+- Update the expected hash only when intentionally changing dataset content.
+
+## Unsloth backend cannot start
+
+- Ensure `training.backend: unsloth` and install dependencies from `requirements.txt` (plus any env-specific unsloth extras if needed).
+- Verify torch/CUDA/transformers compatibility for your GPU runtime.
+
 ## Chat template/tokenization failures
 
 - Verify model tokenizer supports chat templates.

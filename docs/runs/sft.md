@@ -14,15 +14,12 @@
 ```
 
 `start_sft.sh` uses `uv run --python 3.12 --with-requirements ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
-`training.backend` controls dependency file selection:
-
-- `trl` -> `requirements.sft-trl.txt`
-- `unsloth` -> `requirements.sft-unsloth.txt`
+`training.backend` controls trainer backend selection (`trl` or `unsloth`) and dependencies are installed from `requirements.txt`.
 
 Equivalent direct command:
 
 ```bash
-uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.nlp_lab.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Config fields

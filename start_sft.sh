@@ -25,20 +25,11 @@ print(backend)
 PY
 )"
 
-if [ "$BACKEND" = "unsloth" ]; then
-  REQUIREMENTS_FILE="requirements.sft-unsloth.txt"
-else
-  REQUIREMENTS_FILE="requirements.sft-trl.txt"
-fi
+REQUIREMENTS_FILE="requirements.txt"
 
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
-  if [ -f "requirements.txt" ]; then
-    echo "Warning: $REQUIREMENTS_FILE not found, falling back to requirements.txt"
-    REQUIREMENTS_FILE="requirements.txt"
-  else
-    echo "Error: requirements file not found: $REQUIREMENTS_FILE"
-    exit 1
-  fi
+  echo "Error: requirements file not found: $REQUIREMENTS_FILE"
+  exit 1
 fi
 
 is_local_mlflow() {

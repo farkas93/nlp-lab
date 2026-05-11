@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -10,6 +12,7 @@ Usage:
     [--train-config configs/sft_hass_qwen3_5_0_8b.yaml] \
     [--tag v1.0.0] \
     [--llama-cpp-dir "$HOME/llama.cpp"] \
+    [--convert-script /path/to/convert_hf_to_gguf.py] \
     [--quant Q4_K_M] \
     [--public]
 
@@ -27,6 +30,7 @@ ADAPTER_REPO=""
 GGUF_REPO=""
 TAG=""
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
+CONVERT_SCRIPT=""
 QUANT_METHOD=""
 GGUF_PRIVATE="true"
 TRAIN_CONFIG_PATH=""
@@ -47,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --llama-cpp-dir)
       LLAMA_CPP_DIR="$2"
+      shift 2
+      ;;
+    --convert-script)
+      CONVERT_SCRIPT="$2"
       shift 2
       ;;
     --train-config)
@@ -83,10 +91,20 @@ if [[ -f ".env" ]]; then
   set -a
   . ./.env
   set +a
+elif [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a
+  . "$SCRIPT_DIR/.env"
+  set +a
 fi
 
 if [[ -z "${HF_HUB_TOKEN:-}" ]]; then
   echo "HF_HUB_TOKEN is required in environment."
+  exit 1
+fi
+
+REQ_FILE="$SCRIPT_DIR/requirements.txt"
+if [[ ! -f "$REQ_FILE" ]]; then
+  echo "Could not find requirements file: $REQ_FILE"
   exit 1
 fi
 
@@ -95,9 +113,23 @@ if [[ -n "$TRAIN_CONFIG_PATH" && ! -f "$TRAIN_CONFIG_PATH" ]]; then
   exit 1
 fi
 
-CONVERT_SCRIPT="$LLAMA_CPP_DIR/convert_hf_to_gguf.py"
+if [[ -z "$CONVERT_SCRIPT" ]]; then
+  for candidate in \
+    "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
+    "$LLAMA_CPP_DIR/convert-hf-to-gguf.py" \
+    "$LLAMA_CPP_DIR/tools/convert_hf_to_gguf.py" \
+    "$LLAMA_CPP_DIR/examples/convert_hf_to_gguf.py"; do
+    if [[ -f "$candidate" ]]; then
+      CONVERT_SCRIPT="$candidate"
+      break
+    fi
+  done
+fi
+
 if [[ ! -f "$CONVERT_SCRIPT" ]]; then
-  echo "convert_hf_to_gguf.py not found at $CONVERT_SCRIPT"
+  echo "Could not locate GGUF conversion script."
+  echo "Checked under --llama-cpp-dir=$LLAMA_CPP_DIR"
+  echo "Pass --convert-script explicitly if your layout is custom."
   exit 1
 fi
 
@@ -142,7 +174,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Merging adapter into base model (temporary): $ADAPTER_REPO"
-ADAPTER_REPO="$ADAPTER_REPO" MERGED_DIR="$MERGED_DIR" uv run --python 3.12 --with-requirements requirements.sft-trl.txt python - <<'PY'
+ADAPTER_REPO="$ADAPTER_REPO" MERGED_DIR="$MERGED_DIR" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
 import os
 
 import torch
@@ -184,7 +216,7 @@ if [[ -n "$QUANT_METHOD" ]]; then
 fi
 
 echo "Uploading GGUF artifacts to $GGUF_REPO"
-GGUF_REPO="$GGUF_REPO" GGUF_PRIVATE="$GGUF_PRIVATE" TAG="$TAG" ADAPTER_REPO="$ADAPTER_REPO" UPLOAD_FILES="${UPLOAD_FILES[*]}" TRAIN_CONFIG_PATH="$TRAIN_CONFIG_PATH" NLP_LAB_GIT_COMMIT="$NLP_LAB_GIT_COMMIT" NLP_LAB_GIT_DESCRIBE="$NLP_LAB_GIT_DESCRIBE" NLP_LAB_GIT_BRANCH="$NLP_LAB_GIT_BRANCH" NLP_LAB_GIT_DIRTY="$NLP_LAB_GIT_DIRTY" NLP_LAB_GIT_REMOTE="$NLP_LAB_GIT_REMOTE" LLAMA_CPP_DIR="$LLAMA_CPP_DIR" QUANT_METHOD="$QUANT_METHOD" uv run --python 3.12 --with-requirements requirements.sft-trl.txt python - <<'PY'
+GGUF_REPO="$GGUF_REPO" GGUF_PRIVATE="$GGUF_PRIVATE" TAG="$TAG" ADAPTER_REPO="$ADAPTER_REPO" UPLOAD_FILES="${UPLOAD_FILES[*]}" TRAIN_CONFIG_PATH="$TRAIN_CONFIG_PATH" NLP_LAB_GIT_COMMIT="$NLP_LAB_GIT_COMMIT" NLP_LAB_GIT_DESCRIBE="$NLP_LAB_GIT_DESCRIBE" NLP_LAB_GIT_BRANCH="$NLP_LAB_GIT_BRANCH" NLP_LAB_GIT_DIRTY="$NLP_LAB_GIT_DIRTY" NLP_LAB_GIT_REMOTE="$NLP_LAB_GIT_REMOTE" LLAMA_CPP_DIR="$LLAMA_CPP_DIR" QUANT_METHOD="$QUANT_METHOD" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
 import json
 import os
 import tempfile

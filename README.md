@@ -58,10 +58,7 @@ Run training via `uv` (Python 3.12):
 ```
 
 `start_sft.sh` only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
-It reads `training.backend` from the YAML config and selects:
-
-- `requirements.sft-trl.txt` for `trl`
-- `requirements.sft-unsloth.txt` for `unsloth`
+It reads `training.backend` from the YAML config and installs dependencies from `requirements.txt`.
 
 Run with custom config path:
 
@@ -80,7 +77,7 @@ The GGUF publish script can also upload the exact training config and `nlp-lab` 
 Direct Python command:
 
 ```bash
-uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Dataset contract expectations
