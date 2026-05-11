@@ -15,6 +15,7 @@ Usage:
 
 Notes:
 - Requires HF_HUB_TOKEN in environment.
+- Auto-loads `.env` from current directory when present.
 - Default output is F16 GGUF only. Pass --quant to also upload quantized GGUF.
 - Merged safetensors are created in a temporary directory and deleted on exit.
 - Uploads training provenance metadata (`nlp_lab_provenance.json`).
@@ -76,6 +77,12 @@ if [[ -z "$ADAPTER_REPO" || -z "$GGUF_REPO" ]]; then
   echo "Both --adapter-repo and --gguf-repo are required."
   usage
   exit 1
+fi
+
+if [[ -f ".env" ]]; then
+  set -a
+  . ./.env
+  set +a
 fi
 
 if [[ -z "${HF_HUB_TOKEN:-}" ]]; then
