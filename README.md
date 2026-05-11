@@ -12,6 +12,12 @@
 - `docs/runs/benchmarking.md`
 - `docs/troubleshooting.md`
 
+## Repository areas
+
+- Production SFT path: `src/nlp_lab/sft/`
+- Common runtime helpers: `src/nlp_lab/common/`
+- Legacy post-training experiments: `experiments/legacy_post_training/`
+
 ## Environment
 
 Copy the env template and set values:
@@ -35,7 +41,10 @@ SFT runs are YAML-driven. Default config:
 Main fields:
 
 - `data.dataset_manifest_uri` -> manifest created by `build_general_sft_dataset`
+- `data.cache_mode` -> `reuse` (default) or `refresh` to force dataset redownload
+- `data.expected_manifest_sha256` -> optional guard to fail on unexpected manifest content
 - `model.model_name` -> base model HF repo
+- `training.backend` -> `trl` or `unsloth`
 - `training.*` -> experiment and training hyperparameters
 
 See full runbook: `docs/runs/sft.md`.
@@ -49,6 +58,10 @@ Run training via `uv` (Python 3.12):
 ```
 
 `start_sft.sh` only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
+It reads `training.backend` from the YAML config and selects:
+
+- `requirements.sft-trl.txt` for `trl`
+- `requirements.sft-unsloth.txt` for `unsloth`
 
 Run with custom config path:
 
@@ -56,10 +69,18 @@ Run with custom config path:
 ./start_sft.sh configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
+For Ollama-first deployment, publish LoRA adapters from training, then export GGUF with:
+
+```bash
+./publish_gguf_from_lora.sh --help
+```
+
+The GGUF publish script can also upload the exact training config and `nlp-lab` git provenance to the model repo.
+
 Direct Python command:
 
 ```bash
-uv run --python 3.12 --with-requirements requirements.txt python src/sft_finetune.py --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.nlp_lab.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Dataset contract expectations

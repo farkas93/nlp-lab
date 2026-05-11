@@ -64,6 +64,37 @@ hub:
 - Final checkpoint and tokenizer under `training.output_dir/final`.
 - MLflow run with dataset lineage parameters and training metrics.
 
+## Ollama-first publish flow (GGUF)
+
+If your deployment target is Ollama, keep only adapter publishing in SFT config and produce GGUF as a separate post-training step.
+
+Recommended `hub` config:
+
+```yaml
+hub:
+  push_to_hub: true
+  repo_name: your-org/qwen35-08b-hass-tools-lora
+  adapter_tag: v1.0.0
+  full_model: false
+```
+
+Then generate and publish GGUF from the adapter:
+
+```bash
+HF_HUB_TOKEN=... ./publish_gguf_from_lora.sh \
+  --adapter-repo your-org/qwen35-08b-hass-tools-lora \
+  --gguf-repo your-org/qwen35-08b-hass-tools-gguf \
+  --train-config configs/sft_hass_qwen3_5_0_8b.yaml \
+  --tag v1.0.0
+```
+
+Notes:
+
+- Default output is F16 GGUF only (no quantization).
+- Add `--quant Q4_K_M` when you want an additional quantized file.
+- The script creates merged safetensors in a temporary directory and deletes them at exit.
+- The script uploads `training_config.yaml` and `nlp_lab_provenance.json` so the GGUF repo records run config and `nlp-lab` git version used.
+
 ## Run hygiene
 
 - Keep one dataset version per run for reproducibility.
