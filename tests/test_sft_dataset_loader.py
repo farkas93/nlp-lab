@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import Dataset
 
-from src.sft_dataset_loader import (
+from src.eliza_trainer.sft.dataset_loader import (
     load_sft_manifest_dataset,
     tokenize_with_assistant_only_loss,
 )

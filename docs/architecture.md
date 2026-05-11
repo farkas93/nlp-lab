@@ -21,10 +21,11 @@
 ## Repository components
 
 - `configs/`: YAML run configs.
-- `src/sft_run_config.py`: YAML config parser and env integration.
-- `src/sft_dataset_loader.py`: manifest + Parquet loader and tokenization bridge.
+- `src/eliza_trainer/sft/run_config.py`: YAML config parser and env integration.
+- `src/eliza_trainer/sft/dataset_loader.py`: manifest + Parquet loader bridge.
 - `src/training/loss_masking.py`: assistant-only loss collator.
-- `src/sft_finetune.py`: end-to-end SFT entrypoint.
+- `src/eliza_trainer/sft/train.py`: unified SFT entrypoint (`trl` and `unsloth`).
+- `experiments/legacy_post_training/`: archived legacy DPO/GRPO/ORPO and tutorial scripts.
 
 ## Outputs
 

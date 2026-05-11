@@ -14,8 +14,8 @@
 
 ## Repository areas
 
-- Production SFT path: `src/nlp_lab/sft/`
-- Common runtime helpers: `src/nlp_lab/common/`
+- Production SFT path: `src/eliza_trainer/sft/`
+- Common runtime helpers: `src/eliza_trainer/common/`
 - Legacy post-training experiments: `experiments/legacy_post_training/`
 
 ## Environment
@@ -80,7 +80,7 @@ The GGUF publish script can also upload the exact training config and `nlp-lab` 
 Direct Python command:
 
 ```bash
-uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.nlp_lab.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Dataset contract expectations

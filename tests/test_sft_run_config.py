@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.nlp_lab.sft.run_config import load_sft_run_config
+from src.eliza_trainer.sft.run_config import load_sft_run_config
 
 
 class SFTRunConfigTests(unittest.TestCase):
