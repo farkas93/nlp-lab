@@ -12,6 +12,35 @@ fi
 MLFLOW_URI="${MLFLOW_TRACKING_URI:-https://mlflow.chezombor.com/}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
+BACKEND="$(python - <<'PY' "$CONFIG_PATH"
+import sys
+import yaml
+
+config_path = sys.argv[1]
+with open(config_path, "r", encoding="utf-8") as handle:
+    raw = yaml.safe_load(handle) or {}
+training = raw.get("training") or {}
+backend = str(training.get("backend", "trl")).strip().lower()
+print(backend)
+PY
+)"
+
+if [ "$BACKEND" = "unsloth" ]; then
+  REQUIREMENTS_FILE="requirements.sft-unsloth.txt"
+else
+  REQUIREMENTS_FILE="requirements.sft-trl.txt"
+fi
+
+if [ ! -f "$REQUIREMENTS_FILE" ]; then
+  if [ -f "requirements.txt" ]; then
+    echo "Warning: $REQUIREMENTS_FILE not found, falling back to requirements.txt"
+    REQUIREMENTS_FILE="requirements.txt"
+  else
+    echo "Error: requirements file not found: $REQUIREMENTS_FILE"
+    exit 1
+  fi
+fi
+
 is_local_mlflow() {
   case "$1" in
     *localhost*|*127.0.0.1*) return 0 ;;
@@ -26,5 +55,5 @@ else
   echo "Using remote MLflow (${MLFLOW_URI}), skipping docker compose."
 fi
 
-echo "Running SFT with uv (Python 3.12) using config: ${CONFIG_PATH}"
-uv run --python 3.12 --with-requirements requirements.txt python src/sft_finetune.py --config "$CONFIG_PATH"
+echo "Running SFT backend=${BACKEND} with uv (Python 3.12) using config: ${CONFIG_PATH}"
+uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python -m src.eliza_trainer.sft.train --config "$CONFIG_PATH"
