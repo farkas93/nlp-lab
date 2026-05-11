@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-__all__: list[str] = []
+from .gsm8k import GSM8KRewards
+
+__all__ = ["GSM8KRewards"]
