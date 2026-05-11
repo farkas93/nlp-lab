@@ -205,7 +205,7 @@ PY
 
 F16_GGUF="$OUT_DIR/model-f16.gguf"
 echo "Converting merged model to GGUF (F16)"
-python "$CONVERT_SCRIPT" "$MERGED_DIR" --outfile "$F16_GGUF" --outtype f16
+uv run --python 3.12 --with-requirements "$REQ_FILE" python "$CONVERT_SCRIPT" "$MERGED_DIR" --outfile "$F16_GGUF" --outtype f16
 
 UPLOAD_FILES=("$F16_GGUF")
 if [[ -n "$QUANT_METHOD" ]]; then
