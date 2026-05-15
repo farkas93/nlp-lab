@@ -97,8 +97,8 @@ def run_unsloth_training(
     mlflow.log_param("lora_alpha", run_config.model.lora_alpha)
     mlflow.log_param("lora_dropout", run_config.model.lora_dropout)
     mlflow.log_param("lora_target_modules", ",".join(run_config.model.lora_target_modules))
-    mlflow.log_param("push_to_hub", run_config.hub.push_to_hub)
-    mlflow.log_param("full_model", run_config.hub.full_model)
+    mlflow.log_param("hub_push_to_hub", run_config.hub.push_to_hub)
+    mlflow.log_param("hub_full_model", run_config.hub.full_model)
 
     logging.info("Unsloth training completed")
     del model

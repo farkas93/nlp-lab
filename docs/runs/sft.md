@@ -14,12 +14,17 @@
 ```
 
 `start_sft.sh` uses `uv run --python 3.12 --with-requirements ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
-`training.backend` controls trainer backend selection (`trl` or `unsloth`) and dependencies are installed from `requirements.txt`.
+`training.backend` controls trainer backend selection (`trl` or `unsloth`) and dependency overlays are selected explicitly:
+
+- `trl` -> `requirements.sft-trl.txt`
+- `unsloth` -> `requirements.sft-unsloth.txt`
+
+For `unsloth`, `start_sft.sh` also runs a preflight import check before launching training.
 
 Equivalent direct command:
 
 ```bash
-uv run --python 3.12 --with-requirements requirements.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
+uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
 ## Config fields
@@ -60,6 +65,7 @@ hub:
 - Intermediate checkpoints under `training.output_dir`.
 - Final checkpoint and tokenizer under `training.output_dir/final`.
 - MLflow run with dataset lineage parameters and training metrics.
+- MLflow tokenization-fit metrics (`train_context_fit_pct`, `eval_context_fit_pct`, truncation/drop counts).
 
 ## Ollama-first publish flow (GGUF)
 

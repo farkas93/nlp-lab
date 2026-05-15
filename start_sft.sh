@@ -25,7 +25,18 @@ print(backend)
 PY
 )"
 
-REQUIREMENTS_FILE="requirements.txt"
+case "$BACKEND" in
+  trl)
+    REQUIREMENTS_FILE="requirements.sft-trl.txt"
+    ;;
+  unsloth)
+    REQUIREMENTS_FILE="requirements.sft-unsloth.txt"
+    ;;
+  *)
+    echo "Error: unsupported training backend: $BACKEND (expected trl or unsloth)"
+    exit 1
+    ;;
+esac
 
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
   echo "Error: requirements file not found: $REQUIREMENTS_FILE"
@@ -47,4 +58,13 @@ else
 fi
 
 echo "Running SFT backend=${BACKEND} with uv (Python 3.12) using config: ${CONFIG_PATH}"
+
+if [ "$BACKEND" = "unsloth" ]; then
+  echo "Preflight: validating unsloth import in uv environment..."
+  uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python - <<'PY'
+import unsloth  # noqa: F401
+print("unsloth import OK")
+PY
+fi
+
 uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python -m src.eliza_trainer.sft.train --config "$CONFIG_PATH"

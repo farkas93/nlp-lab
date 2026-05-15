@@ -23,7 +23,9 @@
 
 ## Unsloth backend cannot start
 
-- Ensure `training.backend: unsloth` and install dependencies from `requirements.txt` (plus any env-specific unsloth extras if needed).
+- Ensure `training.backend: unsloth`.
+- Ensure `requirements.sft-unsloth.txt` exists and includes `unsloth`.
+- Run via `./start_sft.sh ...` so backend-specific requirements are selected automatically.
 - Verify torch/CUDA/transformers compatibility for your GPU runtime.
 
 ## Chat template/tokenization failures
