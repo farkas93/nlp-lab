@@ -299,6 +299,7 @@ def tokenize_with_assistant_only_loss(
             return {
                 "__drop__": 1,
                 "__drop_reason": "invalid_row_shape",
+                "__is_truncated__": 0,
                 "input_ids": [],
                 "attention_mask": [],
                 "labels": [],
@@ -323,6 +324,7 @@ def tokenize_with_assistant_only_loss(
             return {
                 "__drop__": 1,
                 "__drop_reason": "empty_prompt_messages",
+                "__is_truncated__": 0,
                 "input_ids": [],
                 "attention_mask": [],
                 "labels": [],
@@ -344,6 +346,7 @@ def tokenize_with_assistant_only_loss(
             return {
                 "__drop__": 1,
                 "__drop_reason": "missing_user_query",
+                "__is_truncated__": 0,
                 "input_ids": [],
                 "attention_mask": [],
                 "labels": [],
@@ -384,6 +387,7 @@ def tokenize_with_assistant_only_loss(
             return {
                 "__drop__": 1,
                 "__drop_reason": "chat_template_error",
+                "__is_truncated__": 0,
                 "input_ids": [],
                 "attention_mask": [],
                 "labels": [],

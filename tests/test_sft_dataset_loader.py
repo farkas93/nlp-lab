@@ -149,6 +149,33 @@ class SFTDatasetLoaderTests(unittest.TestCase):
         self.assertGreater(stats.fit_pct, 0.0)
         self.assertLess(stats.fit_pct, 100.0)
 
+    def test_tokenize_return_stats_handles_dropped_rows_schema(self) -> None:
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list(
+            [
+                {
+                    "messages": [{"role": "user", "content": "valid prompt"}],
+                    "target_text": "ok",
+                },
+                {
+                    "messages": [{"role": "assistant", "content": "no user message"}],
+                    "target_text": "bad row",
+                },
+            ]
+        )
+
+        tokenized, stats = tokenize_with_assistant_only_loss(
+            ds,
+            tokenizer=tokenizer,
+            max_seq_len=128,
+            return_stats=True,
+        )
+
+        self.assertEqual(len(tokenized), 1)
+        self.assertEqual(stats.rows_total, 2)
+        self.assertEqual(stats.rows_valid_before_filter, 1)
+        self.assertEqual(stats.rows_dropped, 1)
+
     def test_load_manifest_dataset_supports_different_nested_tool_argument_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
