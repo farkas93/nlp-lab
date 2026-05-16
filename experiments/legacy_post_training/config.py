@@ -134,7 +134,7 @@ DPO_DATASETS_LIST = ["Intel/orca_dpo_pairs",
 
 # GRPO Datasets
 ######################################
-from rewards.gsm8k import GSM8KRewards
+from src.eliza_trainer.rewards.gsm8k import GSM8KRewards
 reasoning_start = "<think>"
 reasoning_end   = "</think>"
 solution_start = "<SOLUTION>"

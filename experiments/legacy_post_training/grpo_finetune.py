@@ -4,7 +4,7 @@ from transformers import (
     AutoTokenizer,
 )
 from trl import GRPOConfig, GRPOTrainer
-from rewards.gsm8k import GSM8KRewards
+from src.eliza_trainer.rewards.gsm8k import GSM8KRewards
 import config
 import logging
 import mlflow

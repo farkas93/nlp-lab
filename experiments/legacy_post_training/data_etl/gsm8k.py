@@ -1,4 +1,4 @@
-from rewards.gsm8k import GSM8KRewards
+from src.eliza_trainer.rewards.gsm8k import GSM8KRewards
 from datasets import load_dataset
 
 
