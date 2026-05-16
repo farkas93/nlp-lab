@@ -120,6 +120,35 @@ class SFTDatasetLoaderTests(unittest.TestCase):
         row = tokenized[0]
         self.assertEqual(len(row["input_ids"]), len(row["labels"]))
 
+    def test_tokenize_returns_context_fit_stats(self) -> None:
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list(
+            [
+                {
+                    "messages": [{"role": "user", "content": "short"}],
+                    "target_text": "ok",
+                },
+                {
+                    "messages": [{"role": "user", "content": "x" * 400}],
+                    "target_text": "y" * 400,
+                },
+            ]
+        )
+
+        tokenized, stats = tokenize_with_assistant_only_loss(
+            ds,
+            tokenizer=tokenizer,
+            max_seq_len=128,
+            return_stats=True,
+        )
+        self.assertEqual(len(tokenized), 2)
+        self.assertEqual(stats.rows_total, 2)
+        self.assertEqual(stats.rows_valid_before_filter, 2)
+        self.assertEqual(stats.rows_truncated, 1)
+        self.assertEqual(stats.rows_fit_fully, 1)
+        self.assertGreater(stats.fit_pct, 0.0)
+        self.assertLess(stats.fit_pct, 100.0)
+
     def test_load_manifest_dataset_supports_different_nested_tool_argument_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

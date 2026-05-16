@@ -6,12 +6,8 @@ import mlflow
 import torch
 from transformers import Trainer, TrainingArguments
 
-try:
-    from src import model_ops
-    from src.eliza_trainer.losses import AssistantOnlyDataCollator
-except ModuleNotFoundError:  # pragma: no cover - legacy entrypoint compatibility
-    import model_ops
-    from eliza_trainer.losses import AssistantOnlyDataCollator
+from src import model_ops
+from src.eliza_trainer.losses import AssistantOnlyDataCollator
 
 from ..run_config import SFTRunConfig
 

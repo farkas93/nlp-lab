@@ -22,6 +22,28 @@ class SFTManifestLoadResult:
     manifest_sha256: str
 
 
+@dataclass
+class AssistantOnlyTokenizationStats:
+    rows_total: int
+    rows_valid_before_filter: int
+    rows_fit_fully: int
+    rows_truncated: int
+    rows_dropped: int
+    dropped_by_reason: dict[str, int]
+
+    @property
+    def fit_pct(self) -> float:
+        if self.rows_valid_before_filter <= 0:
+            return 0.0
+        return (self.rows_fit_fully / self.rows_valid_before_filter) * 100.0
+
+    @property
+    def truncated_pct(self) -> float:
+        if self.rows_valid_before_filter <= 0:
+            return 0.0
+        return (self.rows_truncated / self.rows_valid_before_filter) * 100.0
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -208,7 +230,8 @@ def tokenize_with_assistant_only_loss(
     *,
     split_name: str = "unknown",
     fail_on_template_error: bool = False,
-) -> Dataset:
+    return_stats: bool = False,
+) -> Dataset | tuple[Dataset, AssistantOnlyTokenizationStats]:
     def _normalize_tool_calls(value: Any) -> list[Any] | None:
         if not isinstance(value, list):
             return None
@@ -379,11 +402,13 @@ def tokenize_with_assistant_only_loss(
             raise ValueError("Tokenizer returned non-list input_ids")
 
         prompt_len = min(len(prompt_ids), len(full_ids))
+        is_truncated = 0
 
         if len(full_ids) > max_seq_len:
             overflow = len(full_ids) - max_seq_len
             full_ids = full_ids[overflow:]
             prompt_len = max(0, prompt_len - overflow)
+            is_truncated = 1
 
         attention_mask = [1] * len(full_ids)
         labels = full_ids.copy()
@@ -393,6 +418,7 @@ def tokenize_with_assistant_only_loss(
         return {
             "__drop__": 0,
             "__drop_reason": "",
+            "__is_truncated__": is_truncated,
             "input_ids": full_ids,
             "attention_mask": attention_mask,
             "labels": labels,
@@ -423,4 +449,24 @@ def tokenize_with_assistant_only_loss(
         for column in filtered.column_names
         if column not in {"input_ids", "attention_mask", "labels"}
     ]
-    return filtered.remove_columns(remove_columns)
+    filtered_clean = filtered.remove_columns(remove_columns)
+
+    if not return_stats:
+        return filtered_clean
+
+    rows_total = len(tokenized)
+    rows_valid_before_filter = len(filtered)
+    rows_truncated = 0
+    if "__is_truncated__" in filtered.column_names:
+        rows_truncated = int(sum(int(value) for value in filtered["__is_truncated__"]))
+    rows_fit_fully = max(0, rows_valid_before_filter - rows_truncated)
+
+    stats = AssistantOnlyTokenizationStats(
+        rows_total=rows_total,
+        rows_valid_before_filter=rows_valid_before_filter,
+        rows_fit_fully=rows_fit_fully,
+        rows_truncated=rows_truncated,
+        rows_dropped=dropped_count,
+        dropped_by_reason=dropped_by_reason,
+    )
+    return filtered_clean, stats
