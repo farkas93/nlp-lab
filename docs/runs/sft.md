@@ -20,6 +20,7 @@
 - `unsloth` -> `requirements.sft-unsloth.txt`
 
 For `unsloth`, `start_sft.sh` also runs a preflight import check before launching training.
+The unsloth requirements overlay is intentionally version-pinned and independent from the vLLM/TRL latest stack to avoid known `transformers` 5.x compatibility breakages.
 Each run also persists host logs under `logs/sft/<timestamp>_<backend>.log` (or `SFT_LOG_DIR` if set), and exports the log path to the trainer process.
 
 Equivalent direct command:

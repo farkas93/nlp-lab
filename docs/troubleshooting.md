@@ -26,6 +26,7 @@
 - Ensure `training.backend: unsloth`.
 - Ensure `requirements.sft-unsloth.txt` exists and includes `unsloth`.
 - Run via `./start_sft.sh ...` so backend-specific requirements are selected automatically.
+- Keep unsloth on the pinned overlay stack (`transformers==4.57.6`, `trl==0.24.0`, `peft==0.18.1`) unless you intentionally validate a newer matrix.
 - Verify torch/CUDA/transformers compatibility for your GPU runtime.
 
 ## Investigate crashed SFT runs
