@@ -32,12 +32,23 @@ Recommended manifest fields for lineage:
 Each SFT row must include:
 
 - `messages`: ordered context messages
-- `target_text`: assistant target string
+- `target_text`: assistant target string (backward-compatible)
 
 Expected `messages` item shape:
 
 - `role`: `system|user|assistant|tool`
 - `content`: text content
+
+Native tool-calling metadata is supported and preserved when present:
+
+- `tool_calls` (assistant messages)
+- `tool_name` / `name` (tool messages)
+
+For Parquet schema stability, `tool_calls[].arguments` should be serialized as a JSON string.
+
+Optional structured target shape:
+
+- `target_message`: assistant target message object. When present, loader/tokenizer uses this as the supervised target and preserves native tool-call fields.
 
 Optional but recommended metadata:
 
@@ -50,7 +61,8 @@ Optional but recommended metadata:
 ## Training semantics
 
 - Context messages are prompt context.
-- `target_text` is the supervised assistant output.
+- `target_text` is the supervised assistant output when `target_message` is absent.
+- `target_message` is the supervised assistant output when present (including structured tool-call fields).
 - Loss is computed only on assistant target tokens.
 - Context tokens are masked with `-100` labels.
 
