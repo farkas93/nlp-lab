@@ -38,6 +38,22 @@ case "$BACKEND" in
     ;;
 esac
 
+RUN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_LOG_DIR="${SFT_LOG_DIR:-logs/sft}"
+mkdir -p "$RUN_LOG_DIR"
+RUN_LOG_FILE="$RUN_LOG_DIR/${RUN_TS}_${BACKEND}.log"
+if [ "${RUN_LOG_FILE#/}" = "$RUN_LOG_FILE" ]; then
+  RUN_LOG_FILE="$(pwd)/$RUN_LOG_FILE"
+fi
+
+export SFT_RUN_TS="$RUN_TS"
+export SFT_RUN_BACKEND="$BACKEND"
+export SFT_RUN_LOG_FILE="$RUN_LOG_FILE"
+
+exec > >(tee -a "$RUN_LOG_FILE") 2>&1
+echo "SFT run logs will be persisted to: $RUN_LOG_FILE"
+trap 'echo "SFT run failed. Inspect log: $RUN_LOG_FILE"' ERR
+
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
   echo "Error: requirements file not found: $REQUIREMENTS_FILE"
   exit 1

@@ -28,6 +28,12 @@
 - Run via `./start_sft.sh ...` so backend-specific requirements are selected automatically.
 - Verify torch/CUDA/transformers compatibility for your GPU runtime.
 
+## Investigate crashed SFT runs
+
+- Check the host log file first: `logs/sft/<timestamp>_<backend>.log` (or `SFT_LOG_DIR` if customized).
+- Open the corresponding MLflow run and inspect `run_diagnostics/` artifacts.
+- For failures, `run_diagnostics/crash_report.json` contains error type, message, traceback, and run metadata.
+
 ## Chat template/tokenization failures
 
 - Verify model tokenizer supports chat templates.

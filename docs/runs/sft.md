@@ -20,6 +20,7 @@
 - `unsloth` -> `requirements.sft-unsloth.txt`
 
 For `unsloth`, `start_sft.sh` also runs a preflight import check before launching training.
+Each run also persists host logs under `logs/sft/<timestamp>_<backend>.log` (or `SFT_LOG_DIR` if set), and exports the log path to the trainer process.
 
 Equivalent direct command:
 
@@ -66,6 +67,7 @@ hub:
 - Final checkpoint and tokenizer under `training.output_dir/final`.
 - MLflow run with dataset lineage parameters and training metrics.
 - MLflow tokenization-fit metrics (`train_context_fit_pct`, `eval_context_fit_pct`, truncation/drop counts).
+- MLflow run diagnostics artifacts under `run_diagnostics/` (`effective_config.yaml`, host run log, and `crash_report.json` when a run fails).
 
 ## Ollama-first publish flow (GGUF)
 

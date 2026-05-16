@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import tempfile
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
@@ -67,96 +71,212 @@ def _validate_manifest_expectation(expected_sha256: str | None, actual_sha256: s
         )
 
 
+def _log_tokenization_fit_metrics(*, prefix: str, stats) -> None:
+    mlflow.log_metric(f"{prefix}_rows_total_raw", float(stats.rows_total))
+    mlflow.log_metric(f"{prefix}_rows_valid_before_filter", float(stats.rows_valid_before_filter))
+    mlflow.log_metric(f"{prefix}_rows_fit_fully", float(stats.rows_fit_fully))
+    mlflow.log_metric(f"{prefix}_rows_truncated", float(stats.rows_truncated))
+    mlflow.log_metric(f"{prefix}_rows_dropped_tokenization", float(stats.rows_dropped))
+    mlflow.log_metric(f"{prefix}_context_fit_pct", float(stats.fit_pct))
+    mlflow.log_metric(f"{prefix}_context_truncated_pct", float(stats.truncated_pct))
+    for reason, count in sorted((stats.dropped_by_reason or {}).items()):
+        metric_reason = reason.replace("-", "_").replace(" ", "_")
+        mlflow.log_metric(f"{prefix}_drop_{metric_reason}", float(count))
+
+
+def _copy_config_snapshot(config_path: str, artifacts_dir: Path) -> Path | None:
+    try:
+        source = Path(config_path)
+        if not source.exists():
+            return None
+        target = artifacts_dir / "effective_config.yaml"
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        return target
+    except Exception:
+        logging.warning("Failed to capture config snapshot for diagnostics", exc_info=True)
+        return None
+
+
+def _write_crash_report(
+    *,
+    artifacts_dir: Path,
+    config_path: str,
+    backend: str | None,
+    run_name: str | None,
+    run_id: str | None,
+    exc: BaseException,
+) -> Path | None:
+    try:
+        payload = {
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "traceback": traceback.format_exc(),
+            "config_path": config_path,
+            "backend": backend,
+            "run_name": run_name,
+            "mlflow_run_id": run_id,
+            "host_log_file": os.getenv("SFT_RUN_LOG_FILE") or None,
+        }
+        path = artifacts_dir / "crash_report.json"
+        path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        return path
+    except Exception:
+        logging.warning("Failed to write crash report diagnostics", exc_info=True)
+        return None
+
+
+def _log_diagnostics_artifacts_to_mlflow(run_id: str | None, artifact_paths: list[Path]) -> None:
+    if not run_id:
+        return
+
+    existing = [path for path in artifact_paths if isinstance(path, Path) and path.exists()]
+    if not existing:
+        return
+
+    try:
+        client = mlflow.tracking.MlflowClient()
+        for path in existing:
+            client.log_artifact(run_id, str(path), artifact_path="run_diagnostics")
+    except Exception:
+        logging.warning(
+            "Failed to upload one or more run diagnostics artifacts to MLflow",
+            exc_info=True,
+        )
+
+
 def main() -> None:
     configure_logging()
     ensure_cuda_alloc_conf()
     args = parse_args()
 
-    project_root = Path(__file__).resolve().parents[3]
-    load_project_env(project_root)
+    diagnostics_dir = Path(tempfile.mkdtemp(prefix="sft_run_diagnostics_"))
+    diagnostics_paths: list[Path] = []
+    config_snapshot = _copy_config_snapshot(args.config, diagnostics_dir)
+    if config_snapshot:
+        diagnostics_paths.append(config_snapshot)
+    log_file_env = str(os.getenv("SFT_RUN_LOG_FILE") or "").strip()
+    if log_file_env:
+        diagnostics_paths.append(Path(log_file_env))
+    run_id: str | None = None
+    backend: str | None = None
+    run_name: str | None = None
 
-    run_config = load_sft_run_config(args.config)
-    apply_tracking_env(run_config)
+    try:
+        project_root = Path(__file__).resolve().parents[3]
+        load_project_env(project_root)
 
-    hf_token = os.environ.get("HF_HUB_TOKEN")
-    if hf_token:
-        login(token=hf_token)
+        run_config = load_sft_run_config(args.config)
+        apply_tracking_env(run_config)
+        backend = run_config.training.backend
+        run_name = run_config.training.run_name
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        run_config.model.model_name,
-        add_eos_token=True,
-        use_fast=True,
-        cache_dir=run_config.hf_model_cache_dir,
-    )
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "left"
+        hf_token = os.environ.get("HF_HUB_TOKEN")
+        if hf_token:
+            login(token=hf_token)
 
-    dataset_result = load_sft_manifest_dataset(
-        manifest_uri=run_config.data.dataset_manifest_uri,
-        train_split=run_config.data.train_split,
-        eval_split=run_config.data.eval_split,
-        max_train_samples=run_config.data.max_train_samples,
-        max_eval_samples=run_config.data.max_eval_samples,
-        cache_mode=run_config.data.cache_mode,
-    )
-    _validate_manifest_expectation(
-        run_config.data.expected_manifest_sha256,
-        dataset_result.manifest_sha256,
-    )
-
-    train_dataset = tokenize_with_assistant_only_loss(
-        dataset_result.train_dataset,
-        tokenizer=tokenizer,
-        max_seq_len=run_config.model.max_seq_len,
-        split_name=run_config.data.train_split,
-    )
-    eval_dataset = tokenize_with_assistant_only_loss(
-        dataset_result.eval_dataset,
-        tokenizer=tokenizer,
-        max_seq_len=run_config.model.max_seq_len,
-        split_name=run_config.data.eval_split,
-    )
-
-    logging.info(
-        "Prepared dataset backend=%s manifest_sha256=%s train_rows=%s eval_rows=%s cache_mode=%s",
-        run_config.training.backend,
-        dataset_result.manifest_sha256,
-        len(train_dataset),
-        len(eval_dataset),
-        run_config.data.cache_mode,
-    )
-
-    mlflow.set_experiment(run_config.training.experiment_name)
-    with mlflow.start_run(run_name=run_config.training.run_name):
-        _mlflow_log_dataset_lineage(
-            dataset_result.manifest_uri,
-            dataset_result.manifest_sha256,
-            dataset_result.manifest,
+        tokenizer = AutoTokenizer.from_pretrained(
+            run_config.model.model_name,
+            add_eos_token=True,
+            use_fast=True,
+            cache_dir=run_config.hf_model_cache_dir,
         )
-        mlflow.log_param("model_name", run_config.model.model_name)
-        mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
-        mlflow.log_param("backend", run_config.training.backend)
-        mlflow.log_param("cache_mode", run_config.data.cache_mode)
-        mlflow.log_metric("train_rows_effective", float(len(train_dataset)))
-        mlflow.log_metric("eval_rows_effective", float(len(eval_dataset)))
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.padding_side = "left"
 
-        if run_config.training.backend == "trl":
-            run_trl_training(
-                run_config=run_config,
-                tokenizer=tokenizer,
-                train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
+        dataset_result = load_sft_manifest_dataset(
+            manifest_uri=run_config.data.dataset_manifest_uri,
+            train_split=run_config.data.train_split,
+            eval_split=run_config.data.eval_split,
+            max_train_samples=run_config.data.max_train_samples,
+            max_eval_samples=run_config.data.max_eval_samples,
+            cache_mode=run_config.data.cache_mode,
+        )
+        _validate_manifest_expectation(
+            run_config.data.expected_manifest_sha256,
+            dataset_result.manifest_sha256,
+        )
+
+        train_dataset, train_token_stats = tokenize_with_assistant_only_loss(
+            dataset_result.train_dataset,
+            tokenizer=tokenizer,
+            max_seq_len=run_config.model.max_seq_len,
+            split_name=run_config.data.train_split,
+            return_stats=True,
+        )
+        eval_dataset, eval_token_stats = tokenize_with_assistant_only_loss(
+            dataset_result.eval_dataset,
+            tokenizer=tokenizer,
+            max_seq_len=run_config.model.max_seq_len,
+            split_name=run_config.data.eval_split,
+            return_stats=True,
+        )
+
+        logging.info(
+            "Prepared dataset backend=%s manifest_sha256=%s train_rows=%s eval_rows=%s cache_mode=%s",
+            run_config.training.backend,
+            dataset_result.manifest_sha256,
+            len(train_dataset),
+            len(eval_dataset),
+            run_config.data.cache_mode,
+        )
+        logging.info(
+            "Context fit train_fit_pct=%.2f eval_fit_pct=%.2f train_truncated=%s eval_truncated=%s",
+            train_token_stats.fit_pct,
+            eval_token_stats.fit_pct,
+            train_token_stats.rows_truncated,
+            eval_token_stats.rows_truncated,
+        )
+
+        mlflow.set_experiment(run_config.training.experiment_name)
+        with mlflow.start_run(run_name=run_config.training.run_name) as active_run:
+            run_id = active_run.info.run_id
+            _mlflow_log_dataset_lineage(
+                dataset_result.manifest_uri,
+                dataset_result.manifest_sha256,
+                dataset_result.manifest,
             )
-        elif run_config.training.backend == "unsloth":
-            run_unsloth_training(
-                run_config=run_config,
-                tokenizer=tokenizer,
-                train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
-            )
-        else:
-            raise RuntimeError(f"Unsupported backend={run_config.training.backend}")
+            mlflow.log_param("model_name", run_config.model.model_name)
+            mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
+            mlflow.log_param("backend", run_config.training.backend)
+            mlflow.log_param("cache_mode", run_config.data.cache_mode)
+            mlflow.log_metric("train_rows_effective", float(len(train_dataset)))
+            mlflow.log_metric("eval_rows_effective", float(len(eval_dataset)))
+            _log_tokenization_fit_metrics(prefix="train", stats=train_token_stats)
+            _log_tokenization_fit_metrics(prefix="eval", stats=eval_token_stats)
+
+            if run_config.training.backend == "trl":
+                run_trl_training(
+                    run_config=run_config,
+                    tokenizer=tokenizer,
+                    train_dataset=train_dataset,
+                    eval_dataset=eval_dataset,
+                )
+            elif run_config.training.backend == "unsloth":
+                run_unsloth_training(
+                    run_config=run_config,
+                    tokenizer=tokenizer,
+                    train_dataset=train_dataset,
+                    eval_dataset=eval_dataset,
+                )
+            else:
+                raise RuntimeError(f"Unsupported backend={run_config.training.backend}")
+    except Exception as exc:
+        crash_report = _write_crash_report(
+            artifacts_dir=diagnostics_dir,
+            config_path=args.config,
+            backend=backend,
+            run_name=run_name,
+            run_id=run_id,
+            exc=exc,
+        )
+        if crash_report:
+            diagnostics_paths.append(crash_report)
+        logging.exception("SFT run crashed")
+        raise
+    finally:
+        _log_diagnostics_artifacts_to_mlflow(run_id, diagnostics_paths)
 
 
 if __name__ == "__main__":
