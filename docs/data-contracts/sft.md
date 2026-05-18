@@ -1,6 +1,6 @@
 # SFT Data Contract
 
-This contract defines what `nlp-lab` expects from `build_general_sft_dataset` outputs.
+This contract defines what `nlp-lab` expects from `materialize_sft_release` outputs.
 
 ## Storage layout
 

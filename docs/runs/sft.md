@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-1. `build_general_sft_dataset` has produced a manifest and Parquet splits.
+1. `materialize_sft_release` has produced a manifest and Parquet splits.
 2. `.env` exists and contains model, tracking, and storage credentials.
 3. YAML run config points to the correct dataset manifest URI.
 4. `uv` is installed and Python 3.12 is available.
