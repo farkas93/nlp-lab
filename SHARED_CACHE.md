@@ -4,7 +4,7 @@
 - Agent name: `bravo`
 - Scope owner (current): manifest-driven DPO runtime foundation in `nlp-lab`
 - Started: 2026-05-18 UTC
-- Last pushed commit (this scope): `042b1f2`
+- Last pushed commit (this scope): `80122f7`
 - Concurrency note: keep SFT runtime untouched while adding DPO path in parallel.
 
 ## Bravo Active/Reserved Files
@@ -57,7 +57,7 @@
 ## Next Action Queue (post-push)
 - [x] Add DPO troubleshooting section in `docs/troubleshooting.md`.
 - [x] Add small synthetic manifest fixture tests for `src/dpo_dataset_loader.py` and `dpo/run_config.py`.
-- [ ] Add DPO metric/eval notes (tool-call decision, arg precision) in docs.
+- [x] Add DPO metric/eval notes (tool-call decision, arg precision) in docs.
 
 ## Upcoming Work Window (Bravo)
 - Keep active ownership on `src/eliza_trainer/dpo/*` and DPO docs during hardening.
