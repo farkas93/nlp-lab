@@ -40,12 +40,14 @@ SFT runs are YAML-driven. Default config:
 
 Main fields:
 
-- `data.dataset_manifest_uri` -> manifest created by `build_general_sft_dataset`
+- `config_schema_version` -> must be `2`
+- `identity.experiment_tag` + `identity.backend` -> run naming and backend selection
+- `data.bucket` + `data.dataset_id` + `data.dataset_version` -> manifest URI is auto-derived
 - `data.cache_mode` -> `reuse` (default) or `refresh` to force dataset redownload
 - `data.expected_manifest_sha256` -> optional guard to fail on unexpected manifest content
-- `model.model_name` -> base model HF repo
-- `training.backend` -> `trl` or `unsloth`
+- `model.owner` + `model.name` -> base model HF repo is auto-derived as `{owner}/{name}`
 - `training.*` -> experiment and training hyperparameters
+- `hub.owner` + publish flags -> adapter/full target repos are auto-derived with LoRA suffix policy
 
 See full runbook: `docs/runs/sft.md`.
 
@@ -58,7 +60,7 @@ Run training via `uv` (Python 3.12):
 ```
 
 `start_sft.sh` only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
-It reads `training.backend` from the YAML config and selects backend-specific dependency overlays:
+It reads `identity.backend` from the YAML config and selects backend-specific dependency overlays:
 
 - `trl` -> `requirements.sft-trl.txt`
 - `unsloth` -> `requirements.sft-unsloth.txt`

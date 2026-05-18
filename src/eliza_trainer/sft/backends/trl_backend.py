@@ -87,11 +87,13 @@ def run_trl_training(
         tokenizer=tokenizer,
         output_dir=final_dir,
         push_to_hub=run_config.hub.push_to_hub,
-        repo_name=run_config.hub.repo_name,
-        full_model=run_config.hub.full_model,
+        adapter_repo_name=run_config.hub.adapter_repo_name,
+        publish_adapter=run_config.hub.publish_adapter,
+        publish_full_model=run_config.hub.publish_full_model,
         full_model_repo_name=run_config.hub.full_model_repo_name,
         adapter_tag=run_config.hub.adapter_tag,
         full_model_tag=run_config.hub.full_model_tag,
+        allow_existing_tags=run_config.hub.allow_existing_tags,
     )
 
     mlflow.log_param("backend", "trl")
@@ -104,7 +106,7 @@ def run_trl_training(
         mlflow.log_param("lora_dropout", run_config.model.lora_dropout)
         mlflow.log_param("lora_target_modules", ",".join(run_config.model.lora_target_modules))
     mlflow.log_param("hub_push_to_hub", run_config.hub.push_to_hub)
-    mlflow.log_param("hub_full_model", run_config.hub.full_model)
+    mlflow.log_param("hub_publish_full_model", run_config.hub.publish_full_model)
 
     del model
     torch.cuda.empty_cache()

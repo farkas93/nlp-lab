@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
+from huggingface_hub import HfApi
 from huggingface_hub import login
 from transformers import AutoTokenizer
 
@@ -145,6 +146,28 @@ def _log_diagnostics_artifacts_to_mlflow(run_id: str | None, artifact_paths: lis
         )
 
 
+def _detect_source_repo_lineage(model_repo: str) -> str:
+    try:
+        files = set(HfApi().list_repo_files(repo_id=model_repo, repo_type="model"))
+    except Exception:
+        return "unknown"
+
+    has_adapter = "adapter_config.json" in files or any(
+        name.startswith("adapter_model") for name in files
+    )
+    has_full = "config.json" in files and any(
+        name.startswith("model.safetensors") or name.startswith("pytorch_model")
+        for name in files
+    )
+    if has_adapter and not has_full:
+        return "adapter"
+    if has_full and not has_adapter:
+        return "full"
+    if has_adapter and has_full:
+        return "mixed"
+    return "unknown"
+
+
 def main() -> None:
     configure_logging()
     ensure_cuda_alloc_conf()
@@ -170,6 +193,20 @@ def main() -> None:
         apply_tracking_env(run_config)
         backend = run_config.training.backend
         run_name = run_config.training.run_name
+        source_repo_lineage = _detect_source_repo_lineage(run_config.model.model_name)
+
+        logging.info(
+            "Resolved run plan model=%s backend=%s experiment=%s run_name=%s output_dir=%s manifest_uri=%s adapter_repo=%s full_repo=%s source_repo_lineage=%s",
+            run_config.model.model_name,
+            run_config.training.backend,
+            run_config.training.experiment_name,
+            run_config.training.run_name,
+            run_config.training.output_dir,
+            run_config.data.manifest_uri,
+            run_config.hub.adapter_repo_name,
+            run_config.hub.full_model_repo_name,
+            source_repo_lineage,
+        )
 
         hf_token = os.environ.get("HF_HUB_TOKEN")
         if hf_token:
@@ -186,7 +223,7 @@ def main() -> None:
         tokenizer.padding_side = "left"
 
         dataset_result = load_sft_manifest_dataset(
-            manifest_uri=run_config.data.dataset_manifest_uri,
+            manifest_uri=run_config.data.manifest_uri,
             train_split=run_config.data.train_split,
             eval_split=run_config.data.eval_split,
             max_train_samples=run_config.data.max_train_samples,
@@ -238,6 +275,7 @@ def main() -> None:
                 dataset_result.manifest,
             )
             mlflow.log_param("model_name", run_config.model.model_name)
+            mlflow.log_param("source_repo_lineage", source_repo_lineage)
             mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
             mlflow.log_param("backend", run_config.training.backend)
             mlflow.log_param("cache_mode", run_config.data.cache_mode)

@@ -1,19 +1,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import os
+import re
 
 import yaml
 
 
+CONFIG_SCHEMA_VERSION = 2
 BACKENDS = {"trl", "unsloth"}
 CACHE_MODES = {"reuse", "refresh"}
+TAG_STRATEGIES = {"run_name", "none", "custom"}
+SOURCE_LINEAGE_STRATEGIES = {"auto", "adapter", "full"}
+
+
+@dataclass
+class SFTIdentityConfig:
+    experiment_tag: str
+    backend: str
+    run_label: str | None = None
 
 
 @dataclass
 class SFTDataConfig:
-    dataset_manifest_uri: str
+    bucket: str
+    dataset_id: str
+    dataset_version: str
+    manifest_uri: str
     train_split: str = "train"
     eval_split: str = "eval"
     max_train_samples: int | None = None
@@ -24,7 +39,8 @@ class SFTDataConfig:
 
 @dataclass
 class SFTModelConfig:
-    model_name: str
+    owner: str
+    name: str
     max_seq_len: int = 2048
     use_bf16: bool = True
     load_in_4bit: bool = False
@@ -41,12 +57,17 @@ class SFTModelConfig:
         "down_proj",
     )
 
+    @property
+    def model_name(self) -> str:
+        return f"{self.owner}/{self.name}"
+
 
 @dataclass
 class SFTTrainingConfig:
     experiment_name: str
     run_name: str
     output_dir: str
+    output_root: str = "./outputs"
     backend: str = "trl"
     num_train_epochs: int = 1
     learning_rate: float = 2e-5
@@ -65,11 +86,19 @@ class SFTTrainingConfig:
 @dataclass
 class SFTHubConfig:
     push_to_hub: bool = False
-    repo_name: str | None = None
-    full_model: bool = False
+    owner: str | None = None
+    publish_adapter: bool = True
+    publish_full_model: bool = False
+    repo_adapter: str | None = None
+    repo_full_model: str | None = None
+    adapter_repo_name: str | None = None
     full_model_repo_name: str | None = None
     adapter_tag: str | None = None
     full_model_tag: str | None = None
+    adapter_tag_strategy: str = "run_name"
+    full_model_tag_strategy: str = "none"
+    allow_existing_tags: bool = True
+    source_lineage_strategy: str = "auto"
 
 
 @dataclass
@@ -78,13 +107,23 @@ class SFTTrackingConfig:
 
 
 @dataclass
+class SFTRuntimeConfig:
+    hf_model_cache_dir: str = "./hf_models"
+
+
+@dataclass
 class SFTRunConfig:
+    identity: SFTIdentityConfig
     data: SFTDataConfig
     model: SFTModelConfig
     training: SFTTrainingConfig
     hub: SFTHubConfig
     tracking: SFTTrackingConfig
-    hf_model_cache_dir: str = "./hf_models"
+    runtime: SFTRuntimeConfig
+
+    @property
+    def hf_model_cache_dir(self) -> str:
+        return self.runtime.hf_model_cache_dir
 
 
 def _required(section: dict, key: str, section_name: str) -> object:
@@ -93,10 +132,43 @@ def _required(section: dict, key: str, section_name: str) -> object:
     return section[key]
 
 
+def _require_schema_version(raw: dict) -> None:
+    value = raw.get("config_schema_version")
+    if value != CONFIG_SCHEMA_VERSION:
+        raise ValueError(
+            "Unsupported SFT config schema version. "
+            f"Expected config_schema_version={CONFIG_SCHEMA_VERSION}."
+        )
+
+
+def _reject_legacy_keys(raw: dict) -> None:
+    legacy_map = {
+        "data": {"dataset_manifest_uri"},
+        "model": {"model_name"},
+        "training": {"experiment_name", "run_name", "output_dir", "backend"},
+        "hub": {"repo_name", "full_model"},
+    }
+    for section_name, keys in legacy_map.items():
+        section = raw.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        overlap = sorted(k for k in keys if k in section)
+        if overlap:
+            raise ValueError(
+                "Legacy config keys are not supported in schema v2: "
+                f"{', '.join(f'{section_name}.{k}' for k in overlap)}"
+            )
+    if "hf_model_cache_dir" in raw:
+        raise ValueError(
+            "Legacy root key 'hf_model_cache_dir' is not supported in schema v2. "
+            "Use runtime.hf_model_cache_dir instead."
+        )
+
+
 def _normalize_backend(value: str) -> str:
     backend = (value or "trl").strip().lower()
     if backend not in BACKENDS:
-        raise ValueError(f"Unsupported training.backend={backend}; expected one of {sorted(BACKENDS)}")
+        raise ValueError(f"Unsupported identity.backend={backend}; expected one of {sorted(BACKENDS)}")
     return backend
 
 
@@ -107,20 +179,130 @@ def _normalize_cache_mode(value: str) -> str:
     return cache_mode
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").lower()
+    if not slug:
+        raise ValueError(f"Unable to create slug from value={value!r}")
+    return slug
+
+
+def _ensure_repo_component(value: str, label: str) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        raise ValueError(f"{label} must not be empty")
+    if "/" in cleaned:
+        raise ValueError(f"{label} must not contain '/': {cleaned}")
+    return cleaned
+
+
+def _ensure_repo_stem_has_lora(stem: str) -> str:
+    return stem if stem.endswith("-lora") else f"{stem}-lora"
+
+
+def _strip_repo_stem_lora(stem: str) -> str:
+    return stem[:-5] if stem.endswith("-lora") else stem
+
+
+def _resolve_tag(*, strategy: str, configured_tag: str | None, run_name: str, label: str) -> str | None:
+    normalized = str(strategy or "none").strip().lower()
+    if normalized not in TAG_STRATEGIES:
+        raise ValueError(f"Unsupported hub.{label}_tag_strategy={strategy}; expected one of {sorted(TAG_STRATEGIES)}")
+    if normalized == "none":
+        return None
+    if normalized == "run_name":
+        return run_name
+    cleaned = str(configured_tag or "").strip()
+    if not cleaned:
+        raise ValueError(f"hub.{label}_tag must be set when hub.{label}_tag_strategy=custom")
+    return cleaned
+
+
+def _resolve_manifest_uri(*, bucket: str, dataset_id: str, dataset_version: str) -> str:
+    return f"s3://{bucket}/dataset_id={dataset_id}/dataset_version={dataset_version}/manifest.json"
+
+
+def _resolve_repo_names(
+    *,
+    hub_owner: str,
+    model_owner: str,
+    model_name: str,
+    experiment_tag: str,
+    backend: str,
+    publish_adapter: bool,
+    publish_full_model: bool,
+    repo_adapter_override: str | None,
+    repo_full_override: str | None,
+) -> tuple[str | None, str | None]:
+    if hub_owner != model_owner:
+        base_stem = f"{model_name}-{experiment_tag}-{backend}"
+    else:
+        base_stem = model_name
+
+    adapter_stem = _ensure_repo_stem_has_lora(base_stem)
+    full_stem = _strip_repo_stem_lora(base_stem)
+
+    adapter_repo = None
+    full_repo = None
+    if publish_adapter:
+        adapter_repo = repo_adapter_override or f"{hub_owner}/{adapter_stem}"
+    if publish_full_model:
+        full_repo = repo_full_override or f"{hub_owner}/{full_stem}"
+    return adapter_repo, full_repo
+
+
 def load_sft_run_config(config_path: str) -> SFTRunConfig:
     path = Path(config_path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("Invalid SFT config: expected top-level mapping")
 
+    _require_schema_version(raw)
+    _reject_legacy_keys(raw)
+
+    identity_raw = raw.get("identity") or {}
     data_raw = raw.get("data") or {}
     model_raw = raw.get("model") or {}
     training_raw = raw.get("training") or {}
     hub_raw = raw.get("hub") or {}
     tracking_raw = raw.get("tracking") or {}
+    runtime_raw = raw.get("runtime") or {}
+
+    experiment_tag = _slugify(str(_required(identity_raw, "experiment_tag", "identity")))
+    backend = _normalize_backend(str(_required(identity_raw, "backend", "identity")))
+    run_label = str(identity_raw.get("run_label") or "").strip() or None
+
+    model_owner = _ensure_repo_component(str(_required(model_raw, "owner", "model")), "model.owner")
+    model_name = _ensure_repo_component(str(_required(model_raw, "name", "model")), "model.name")
+    model_slug = _slugify(model_name)
+    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_name = f"{experiment_tag}-{backend}-{run_stamp}"
+    if run_label:
+        run_name = f"{run_name}-{_slugify(run_label)}"
+    experiment_name = f"{model_slug}_{experiment_tag}"
+
+    output_root = str(training_raw.get("output_root", "./outputs"))
+    output_dir = f"{output_root.rstrip('/')}/{model_slug}/{experiment_tag}/{backend}/{run_stamp}"
+
+    data_bucket = str(_required(data_raw, "bucket", "data"))
+    data_dataset_id = str(_required(data_raw, "dataset_id", "data"))
+    data_dataset_version = str(_required(data_raw, "dataset_version", "data"))
+    manifest_uri = _resolve_manifest_uri(
+        bucket=data_bucket,
+        dataset_id=data_dataset_id,
+        dataset_version=data_dataset_version,
+    )
+
+    identity = SFTIdentityConfig(
+        experiment_tag=experiment_tag,
+        backend=backend,
+        run_label=run_label,
+    )
 
     data = SFTDataConfig(
-        dataset_manifest_uri=str(_required(data_raw, "dataset_manifest_uri", "data")),
+        bucket=data_bucket,
+        dataset_id=data_dataset_id,
+        dataset_version=data_dataset_version,
+        manifest_uri=manifest_uri,
         train_split=str(data_raw.get("train_split", "train")),
         eval_split=str(data_raw.get("eval_split", "eval")),
         max_train_samples=(
@@ -138,7 +320,8 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     )
 
     model = SFTModelConfig(
-        model_name=str(_required(model_raw, "model_name", "model")),
+        owner=model_owner,
+        name=model_name,
         max_seq_len=int(model_raw.get("max_seq_len", 2048)),
         use_bf16=bool(model_raw.get("use_bf16", True)),
         load_in_4bit=bool(model_raw.get("load_in_4bit", False)),
@@ -162,10 +345,11 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     )
 
     training = SFTTrainingConfig(
-        experiment_name=str(_required(training_raw, "experiment_name", "training")),
-        run_name=str(_required(training_raw, "run_name", "training")),
-        output_dir=str(_required(training_raw, "output_dir", "training")),
-        backend=_normalize_backend(str(training_raw.get("backend", "trl"))),
+        experiment_name=experiment_name,
+        run_name=run_name,
+        output_dir=output_dir,
+        output_root=output_root,
+        backend=backend,
         num_train_epochs=int(training_raw.get("num_train_epochs", 1)),
         learning_rate=float(training_raw.get("learning_rate", 2e-5)),
         train_batch_size=int(training_raw.get("train_batch_size", 2)),
@@ -180,19 +364,64 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         gradient_checkpointing=bool(training_raw.get("gradient_checkpointing", True)),
     )
 
+    push_to_hub = bool(hub_raw.get("push_to_hub", False))
+    hub_owner = str(hub_raw.get("owner") or "").strip() or None
+    publish_adapter = bool(hub_raw.get("publish_adapter", True))
+    publish_full_model = bool(hub_raw.get("publish_full_model", False))
+    if push_to_hub and not hub_owner:
+        raise ValueError("hub.push_to_hub=true requires hub.owner")
+    if push_to_hub and not (publish_adapter or publish_full_model):
+        raise ValueError("hub.push_to_hub=true requires at least one of hub.publish_adapter or hub.publish_full_model")
+
+    adapter_repo_override = str(hub_raw.get("repo_adapter") or "").strip() or None
+    full_repo_override = str(hub_raw.get("repo_full_model") or "").strip() or None
+    adapter_repo_name, full_model_repo_name = _resolve_repo_names(
+        hub_owner=hub_owner or "",
+        model_owner=model_owner,
+        model_name=model_name,
+        experiment_tag=experiment_tag,
+        backend=backend,
+        publish_adapter=push_to_hub and publish_adapter,
+        publish_full_model=push_to_hub and publish_full_model,
+        repo_adapter_override=adapter_repo_override,
+        repo_full_override=full_repo_override,
+    )
+
+    adapter_tag = _resolve_tag(
+        strategy=str(hub_raw.get("adapter_tag_strategy", "run_name")),
+        configured_tag=(str(hub_raw["adapter_tag"]) if hub_raw.get("adapter_tag") else None),
+        run_name=run_name,
+        label="adapter",
+    )
+    full_model_tag = _resolve_tag(
+        strategy=str(hub_raw.get("full_model_tag_strategy", "none")),
+        configured_tag=(str(hub_raw["full_model_tag"]) if hub_raw.get("full_model_tag") else None),
+        run_name=run_name,
+        label="full_model",
+    )
+
+    source_lineage_strategy = str(hub_raw.get("source_lineage_strategy", "auto")).strip().lower()
+    if source_lineage_strategy not in SOURCE_LINEAGE_STRATEGIES:
+        raise ValueError(
+            "Unsupported hub.source_lineage_strategy="
+            f"{source_lineage_strategy}; expected one of {sorted(SOURCE_LINEAGE_STRATEGIES)}"
+        )
+
     hub = SFTHubConfig(
-        push_to_hub=bool(hub_raw.get("push_to_hub", False)),
-        repo_name=(str(hub_raw["repo_name"]) if hub_raw.get("repo_name") else None),
-        full_model=bool(hub_raw.get("full_model", False)),
-        full_model_repo_name=(
-            str(hub_raw["full_model_repo_name"])
-            if hub_raw.get("full_model_repo_name")
-            else None
-        ),
-        adapter_tag=(str(hub_raw["adapter_tag"]) if hub_raw.get("adapter_tag") else None),
-        full_model_tag=(
-            str(hub_raw["full_model_tag"]) if hub_raw.get("full_model_tag") else None
-        ),
+        push_to_hub=push_to_hub,
+        owner=hub_owner,
+        publish_adapter=publish_adapter,
+        publish_full_model=publish_full_model,
+        repo_adapter=adapter_repo_override,
+        repo_full_model=full_repo_override,
+        adapter_repo_name=adapter_repo_name,
+        full_model_repo_name=full_model_repo_name,
+        adapter_tag=adapter_tag,
+        full_model_tag=full_model_tag,
+        adapter_tag_strategy=str(hub_raw.get("adapter_tag_strategy", "run_name")).strip().lower(),
+        full_model_tag_strategy=str(hub_raw.get("full_model_tag_strategy", "none")).strip().lower(),
+        allow_existing_tags=bool(hub_raw.get("allow_existing_tags", True)),
+        source_lineage_strategy=source_lineage_strategy,
     )
 
     tracking = SFTTrackingConfig(
@@ -201,14 +430,18 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         )
     )
 
-    hf_model_cache_dir = str(raw.get("hf_model_cache_dir", "./hf_models"))
+    runtime = SFTRuntimeConfig(
+        hf_model_cache_dir=str(runtime_raw.get("hf_model_cache_dir", "./hf_models")),
+    )
+
     return SFTRunConfig(
+        identity=identity,
         data=data,
         model=model,
         training=training,
         hub=hub,
         tracking=tracking,
-        hf_model_cache_dir=hf_model_cache_dir,
+        runtime=runtime,
     )
 
 
@@ -216,14 +449,20 @@ def apply_tracking_env(config: SFTRunConfig) -> None:
     if config.tracking.mlflow_tracking_uri:
         os.environ["MLFLOW_TRACKING_URI"] = config.tracking.mlflow_tracking_uri
 
+
 __all__ = [
+    "CONFIG_SCHEMA_VERSION",
     "BACKENDS",
     "CACHE_MODES",
+    "TAG_STRATEGIES",
+    "SOURCE_LINEAGE_STRATEGIES",
+    "SFTIdentityConfig",
     "SFTDataConfig",
     "SFTModelConfig",
     "SFTTrainingConfig",
     "SFTHubConfig",
     "SFTTrackingConfig",
+    "SFTRuntimeConfig",
     "SFTRunConfig",
     "load_sft_run_config",
     "apply_tracking_env",

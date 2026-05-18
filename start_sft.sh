@@ -19,8 +19,8 @@ import yaml
 config_path = sys.argv[1]
 with open(config_path, "r", encoding="utf-8") as handle:
     raw = yaml.safe_load(handle) or {}
-training = raw.get("training") or {}
-backend = str(training.get("backend", "trl")).strip().lower()
+identity = raw.get("identity") or {}
+backend = str(identity.get("backend", "trl")).strip().lower()
 print(backend)
 PY
 )"
@@ -33,7 +33,9 @@ config_path = sys.argv[1]
 with open(config_path, "r", encoding="utf-8") as handle:
     raw = yaml.safe_load(handle) or {}
 model = raw.get("model") or {}
-print(str(model.get("model_name", "")).strip())
+owner = str(model.get("owner", "")).strip()
+name = str(model.get("name", "")).strip()
+print(f"{owner}/{name}".strip("/"))
 PY
 )"
 

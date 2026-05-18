@@ -1,5 +1,13 @@
+config_schema_version: 2
+
+identity:
+  experiment_tag: general_sft
+  backend: trl
+
 data:
-  dataset_manifest_uri: s3://sft-datasets/dataset_id=general/dataset_version=v1/manifest.json
+  bucket: sft-datasets
+  dataset_id: general
+  dataset_version: v1
   train_split: train
   eval_split: eval
   cache_mode: reuse
@@ -8,7 +16,8 @@ data:
   expected_manifest_sha256:
 
 model:
-  model_name: Qwen/Qwen3.5-0.8B
+  owner: Qwen
+  name: Qwen3.5-0.8B
   max_seq_len: 2048
   use_bf16: true
   load_in_4bit: true
@@ -18,10 +27,7 @@ model:
   lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
 training:
-  backend: trl
-  experiment_name: qwen3_5_0_8b_general_sft
-  run_name: general_sft_v1
-  output_dir: ./outputs/qwen3_5_0_8b/general_sft_v1
+  output_root: ./outputs
   num_train_epochs: 5
   learning_rate: 2.0e-5
   train_batch_size: 1
@@ -37,13 +43,16 @@ training:
 
 hub:
   push_to_hub: false
-  repo_name:
-  full_model: false
-  full_model_repo_name:
-  adapter_tag:
-  full_model_tag:
+  owner:
+  publish_adapter: true
+  publish_full_model: false
+  adapter_tag_strategy: run_name
+  full_model_tag_strategy: none
+  allow_existing_tags: true
+  source_lineage_strategy: auto
 
 tracking:
   mlflow_tracking_uri: https://mlflow.chezombor.com/
 
-hf_model_cache_dir: ./hf_models
+runtime:
+  hf_model_cache_dir: ./hf_models

@@ -30,7 +30,7 @@ JAX can be added later behind the same protocol.
 Create a compact benchmark note per run pair:
 
 - config paths used
-- backend values used (`training.backend`)
+- backend values used (`identity.backend`)
 - MLflow run links/ids
 - key metric table
 - decision note (keep/tune/switch)

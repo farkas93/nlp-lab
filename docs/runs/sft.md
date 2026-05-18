@@ -14,7 +14,7 @@
 ```
 
 `start_sft.sh` uses `uv run --python 3.12 --with-requirements ...` and only starts local MLflow via docker-compose when `MLFLOW_TRACKING_URI` points to `localhost` or `127.0.0.1`.
-`training.backend` controls trainer backend selection (`trl` or `unsloth`) and dependency overlays are selected explicitly:
+`identity.backend` controls trainer backend selection (`trl` or `unsloth`) and dependency overlays are selected explicitly:
 
 - `trl` -> `requirements.sft-trl.txt`
 - `unsloth` -> `requirements.sft-unsloth.txt`
@@ -31,35 +31,38 @@ uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.
 
 ## Config fields
 
-- `data.dataset_manifest_uri`: manifest path (`s3://...` or local path)
+- `config_schema_version`: must be `2`
+- `identity.experiment_tag`: experiment label used in derived run names
+- `identity.backend`: `trl` or `unsloth`
+- `data.bucket`, `data.dataset_id`, `data.dataset_version`: manifest URI is derived as `s3://<bucket>/dataset_id=<id>/dataset_version=<version>/manifest.json`
 - `data.train_split`, `data.eval_split`: split names in manifest
 - `data.cache_mode`: `reuse` (default) or `refresh` (force redownload)
 - `data.expected_manifest_sha256`: optional reproducibility guard
 - `data.max_train_samples`, `data.max_eval_samples`: optional smoke-run caps
-- `model.model_name`: base model HF repo, example `Qwen/Qwen3.5-0.8B`
+- `model.owner`, `model.name`: base model HF repo components
 - `model.max_seq_len`: max tokenized sequence length
 - `model.load_in_4bit`: set `true` for lower VRAM footprint on constrained GPUs
 - `model.lora_*`: LoRA adapter config used when `load_in_4bit=true`
-- `training.*`: output directory, learning rate, epochs, batch sizes
-- `training.backend`: `trl` or `unsloth`
+- `training.output_root`: parent directory for derived run output paths
+- `training.*`: learning rate, epochs, batch sizes, scheduler, etc.
 - `training.gradient_checkpointing`: enable to reduce activation memory
 - `tracking.mlflow_tracking_uri`: optional override for tracking backend
-- `hub.push_to_hub`, `hub.repo_name`: optional publishing
-- `hub.full_model`: merge adapter into a full model export after training
-- `hub.full_model_repo_name`: optional HF repo for merged model (defaults to `<repo_name>-merged`)
-- `hub.adapter_tag`: optional HF git tag to create on adapter repo after publish
-- `hub.full_model_tag`: optional HF git tag to create on merged repo after publish
+- `hub.push_to_hub`: enable model publishing
+- `hub.owner`: HF namespace owner for derived target repos
+- `hub.publish_adapter`, `hub.publish_full_model`: explicit publish targets
+- `hub.adapter_tag_strategy`, `hub.full_model_tag_strategy`: `run_name` / `none` / `custom`
+- `hub.allow_existing_tags`: ignore tag `409 Conflict` and continue
 
 Example hub config for adapter + merged publish:
 
 ```yaml
 hub:
   push_to_hub: true
-  repo_name: your-org/qwen35-08b-hass-tools-adapter
-  full_model: true
-  full_model_repo_name: your-org/qwen35-08b-hass-tools-merged
-  adapter_tag: v1.0.0
-  full_model_tag: v1.0.0
+  owner: your-org
+  publish_adapter: true
+  publish_full_model: true
+  adapter_tag_strategy: run_name
+  full_model_tag_strategy: run_name
 ```
 
 ## Outputs
@@ -79,9 +82,10 @@ Recommended `hub` config:
 ```yaml
 hub:
   push_to_hub: true
-  repo_name: your-org/qwen35-08b-hass-tools-lora
-  adapter_tag: v1.0.0
-  full_model: false
+  owner: your-org
+  publish_adapter: true
+  publish_full_model: false
+  adapter_tag_strategy: run_name
 ```
 
 Then generate and publish GGUF from the adapter:

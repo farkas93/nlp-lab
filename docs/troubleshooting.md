@@ -2,7 +2,7 @@
 
 ## Manifest cannot be loaded
 
-- Verify `data.dataset_manifest_uri` points to an existing object/path.
+- Verify `data.bucket`, `data.dataset_id`, and `data.dataset_version` resolve to an existing manifest path.
 - If using S3, check `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION`.
 
 ## No train/eval files found in manifest
@@ -23,7 +23,7 @@
 
 ## Unsloth backend cannot start
 
-- Ensure `training.backend: unsloth`.
+- Ensure `identity.backend: unsloth`.
 - Ensure `requirements.sft-unsloth.txt` exists and includes `unsloth`.
 - Run via `./start_sft.sh ...` so backend-specific requirements are selected automatically.
 - Keep unsloth on the pinned overlay stack (`unsloth==2026.5.2`, `unsloth_zoo==2026.5.1`, `transformers==5.5.0`, `trl==0.24.0`, `peft==0.18.1`) unless you intentionally validate a newer matrix.
