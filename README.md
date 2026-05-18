@@ -8,8 +8,10 @@
 - `docs/architecture.md`
 - `docs/config-schema-v2.md`
 - `docs/data-contracts/sft.md`
+- `docs/data-contracts/dpo.md`
 - `docs/migration-v1-to-v2.md`
 - `docs/runs/sft.md`
+- `docs/runs/dpo.md`
 - `docs/experiments/mlflow.md`
 - `docs/runs/benchmarking.md`
 - `docs/troubleshooting.md`
@@ -17,6 +19,7 @@
 ## Repository areas
 
 - Production SFT path: `src/eliza_trainer/sft/`
+- Production DPO path: `src/eliza_trainer/dpo/`
 - Common runtime helpers: `src/eliza_trainer/common/`
 - Legacy post-training experiments: `experiments/legacy_post_training/`
 
@@ -52,7 +55,7 @@ Main fields:
 - `hub.owner` + publish flags -> adapter/full target repos are auto-derived with LoRA suffix policy
 - manifest governance metadata (`governance.policy_*`) -> policy class logging at train start and policy gates
 
-Policy enforcement helpers live in `src/eliza_trainer/common/data_policy.py` and are reusable for future DPO/GRPO manifest-based runners.
+Policy enforcement helpers live in `src/eliza_trainer/common/data_policy.py` and are reusable across SFT/DPO/GRPO manifest-based runners.
 
 See full runbook: `docs/runs/sft.md`.
 
@@ -100,6 +103,31 @@ Direct Python command:
 ```bash
 uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
+
+## Run DPO
+
+Run DPO training via `uv` (Python 3.12):
+
+```bash
+./start_dpo.sh configs/dpo_hass_qwen3_5_0_8b.yaml
+```
+
+`start_dpo.sh` reads `identity.backend` from the YAML config and currently supports:
+
+- `trl` -> `requirements.dpo-trl.txt`
+
+Run with config dry-run only (no training):
+
+```bash
+./start_dpo.sh configs/dpo_hass_qwen3_5_0_8b.yaml --dry-run-config
+```
+
+DPO policy gates mirror SFT behavior:
+
+- `P3/P4` policy classes require explicit confirmation unless `--assume-yes` is set
+- `P4` blocks runs when `hub.push_to_hub=true`
+
+Full runbook: `docs/runs/dpo.md`.
 
 ## Dataset contract expectations
 

@@ -1,0 +1,63 @@
+config_schema_version: 2
+
+identity:
+  experiment_tag: hass_dpo
+  backend: trl
+
+data:
+  bucket: dpo-datasets
+  dataset_id: dpo_hass_core_tools
+  dataset_version: v1_internal
+  train_split: train
+  eval_split: eval
+  cache_mode: reuse
+  max_train_samples:
+  max_eval_samples:
+  expected_manifest_sha256:
+
+model:
+  owner: Qwen
+  name: Qwen3.5-0.8B
+  max_seq_len: 2048
+  use_bf16: true
+  load_in_4bit: true
+  lora_r: 16
+  lora_alpha: 16
+  lora_dropout: 0.05
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+training:
+  output_root: ./outputs
+  num_train_epochs: 1
+  learning_rate: 2.0e-6
+  train_batch_size: 1
+  eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  logging_steps: 20
+  save_strategy: epoch
+  eval_strategy: epoch
+  warmup_steps: 30
+  lr_scheduler_type: linear
+  seed: 42
+  gradient_checkpointing: true
+
+dpo:
+  beta: 0.1
+  max_prompt_length: 1024
+  max_length: 2048
+
+hub:
+  push_to_hub: false
+  owner:
+  publish_adapter: true
+  publish_full_model: false
+  adapter_tag_strategy: run_name
+  full_model_tag_strategy: none
+  allow_existing_tags: true
+  source_lineage_strategy: auto
+
+tracking:
+  mlflow_tracking_uri: https://mlflow.chezombor.com/
+
+runtime:
+  hf_model_cache_dir: ./hf_models

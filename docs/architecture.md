@@ -5,10 +5,10 @@
 ## End-to-end flow
 
 1. `eliza-data-pipelines` exports and curates sessions (`raw` -> `review` -> `cleaned`).
-2. `eliza-data-pipelines` materializes SFT datasets into `sft-datasets` as Parquet + manifest.
+2. `eliza-data-pipelines` materializes release datasets (`sft-datasets`, `dpo-datasets`) as Parquet + manifest.
 3. `nlp-lab` loads the manifest and Parquet splits.
-4. `nlp-lab` applies chat template rendering at runtime for the selected model tokenizer.
-5. `nlp-lab` trains with assistant-only loss masking.
+4. `nlp-lab` applies tokenizer/model-specific processing at runtime.
+5. `nlp-lab` trains with the selected trainer path (SFT/DPO).
 6. `nlp-lab` logs run metadata and artifacts to MLflow.
 
 ## Design principles
@@ -25,6 +25,9 @@
 - `src/eliza_trainer/sft/dataset_loader.py`: manifest + Parquet loader bridge.
 - `src/eliza_trainer/losses/loss_masking.py`: assistant-only loss collator.
 - `src/eliza_trainer/sft/train.py`: unified SFT entrypoint (`trl` and `unsloth`).
+- `src/eliza_trainer/dpo/run_config.py`: DPO YAML config parser and env integration.
+- `src/eliza_trainer/dpo/dataset_loader.py`: DPO manifest + Parquet loader bridge.
+- `src/eliza_trainer/dpo/train.py`: DPO entrypoint (`trl`).
 - `src/eliza_trainer/rewards/`: reward functions namespace for RL-style trainers.
 - `experiments/legacy_post_training/`: archived legacy DPO/GRPO/ORPO and tutorial scripts.
 
