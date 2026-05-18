@@ -7,11 +7,11 @@ usage() {
   cat <<'EOF'
 Usage:
   ./publish_gguf_from_lora.sh \
-    --adapter-repo zskalo/qwen3.5-0.8b-lora-hass-tools \
-    --gguf-repo zskalo/qwen3.5-0.8b-hass-tools-gguf \
-    [--train-config configs/sft_hass_qwen3_5_0_8b.yaml] \
+    --train-config configs/sft_hass_qwen3_5_0_8b.yaml \
+    [--adapter-repo zskalo/qwen3.5-0.8b-lora-hass-tools] \
+    [--gguf-repo zskalo/qwen3.5-0.8b-hass-tools-gguf] \
     [--tag v1.0.0] \
-    [--llama-cpp-dir "$HOME/llama.cpp"] \
+    [--llama-cpp-dir ~/llama.cpp] \
     [--convert-script /path/to/convert_hf_to_gguf.py] \
     [--quant Q4_K_M] \
     [--public]
@@ -19,10 +19,12 @@ Usage:
 Notes:
 - Requires HF_HUB_TOKEN in environment.
 - Auto-loads `.env` from current directory when present.
+- `--train-config` is required and is used to infer adapter repo when `--adapter-repo` is not provided.
+- GGUF repo defaults to adapter repo with `lora` replaced by `gguf` in repo name when `--gguf-repo` is not provided.
 - Default output is F16 GGUF only. Pass --quant to also upload quantized GGUF.
 - Merged safetensors are created in a temporary directory and deleted on exit.
 - Uploads training provenance metadata (`nlp_lab_provenance.json`).
-- If --train-config is provided, uploads it as `training_config.yaml`.
+- Uploads the provided train config as `training_config.yaml`.
 EOF
 }
 
@@ -81,8 +83,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$ADAPTER_REPO" || -z "$GGUF_REPO" ]]; then
-  echo "Both --adapter-repo and --gguf-repo are required."
+if [[ -z "$TRAIN_CONFIG_PATH" ]]; then
+  echo "--train-config is required."
+  usage
+  exit 1
+fi
+
+if [[ ! -f "$TRAIN_CONFIG_PATH" ]]; then
+  echo "Train config file does not exist: $TRAIN_CONFIG_PATH"
   usage
   exit 1
 fi
@@ -108,10 +116,56 @@ if [[ ! -f "$REQ_FILE" ]]; then
   exit 1
 fi
 
-if [[ -n "$TRAIN_CONFIG_PATH" && ! -f "$TRAIN_CONFIG_PATH" ]]; then
-  echo "Train config file does not exist: $TRAIN_CONFIG_PATH"
-  exit 1
+if [[ -z "$ADAPTER_REPO" ]]; then
+  ADAPTER_REPO="$(TRAIN_CONFIG_PATH="$TRAIN_CONFIG_PATH" SCRIPT_DIR="$SCRIPT_DIR" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
+import os
+import sys
+
+script_dir = os.environ["SCRIPT_DIR"]
+config_path = os.environ["TRAIN_CONFIG_PATH"]
+
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
+from src.eliza_trainer.sft.run_config import load_sft_run_config
+
+cfg = load_sft_run_config(config_path)
+adapter_repo = str(cfg.hub.adapter_repo_name or "").strip()
+if not adapter_repo:
+    raise SystemExit(
+        "Unable to infer adapter repo from train config. "
+        "Set hub.push_to_hub=true with adapter publishing, or pass --adapter-repo."
+    )
+print(adapter_repo)
+PY
+)"
 fi
+
+if [[ -z "$GGUF_REPO" ]]; then
+  GGUF_REPO="$(ADAPTER_REPO="$ADAPTER_REPO" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
+import os
+
+adapter_repo = os.environ["ADAPTER_REPO"].strip()
+if "/" not in adapter_repo:
+    raise SystemExit(f"Invalid adapter repo (expected owner/name): {adapter_repo}")
+owner, name = adapter_repo.split("/", 1)
+
+if "lora" in name:
+    gguf_name = name.replace("lora", "gguf", 1)
+else:
+    gguf_name = f"{name}-gguf"
+    print(
+        f"Warning: adapter repo name has no 'lora' token; defaulting gguf repo suffix: {owner}/{gguf_name}",
+        file=os.sys.stderr,
+    )
+
+print(f"{owner}/{gguf_name}")
+PY
+)"
+fi
+
+echo "Resolved adapter repo: $ADAPTER_REPO"
+echo "Resolved GGUF repo: $GGUF_REPO"
 
 if [[ -z "$CONVERT_SCRIPT" ]]; then
   for candidate in \

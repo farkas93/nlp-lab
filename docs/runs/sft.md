@@ -111,14 +111,14 @@ Then generate and publish GGUF from the adapter:
 
 ```bash
 HF_HUB_TOKEN=... ./publish_gguf_from_lora.sh \
-  --adapter-repo your-org/qwen35-08b-hass-tools-lora \
-  --gguf-repo your-org/qwen35-08b-hass-tools-gguf \
   --train-config configs/sft_hass_qwen3_5_0_8b.yaml \
   --tag v1.0.0
 ```
 
 Notes:
 
+- The script infers adapter repo from `--train-config` and infers GGUF repo by replacing `lora` with `gguf` in the repo name.
+- You can still override with `--adapter-repo` and/or `--gguf-repo` when needed.
 - Default output is F16 GGUF only (no quantization).
 - Add `--quant Q4_K_M` when you want an additional quantized file.
 - The script creates merged safetensors in a temporary directory and deletes them at exit.
