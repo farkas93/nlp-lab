@@ -29,6 +29,12 @@ Equivalent direct command:
 uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml
 ```
 
+Resolve and validate config only (no training):
+
+```bash
+uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml --dry-run-config
+```
+
 ## Config fields
 
 - `config_schema_version`: must be `2`

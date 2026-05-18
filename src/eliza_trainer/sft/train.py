@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
         default="configs/sft_general_qwen3_5_0_8b.yaml",
         help="Path to SFT YAML config",
     )
+    parser.add_argument(
+        "--dry-run-config",
+        action="store_true",
+        help="Resolve and validate config only, then exit",
+    )
     return parser.parse_args()
 
 
@@ -207,6 +212,10 @@ def main() -> None:
             run_config.hub.full_model_repo_name,
             source_repo_lineage,
         )
+
+        if args.dry_run_config:
+            logging.info("Dry run successful; exiting before tokenizer/dataset/training")
+            return
 
         hf_token = os.environ.get("HF_HUB_TOKEN")
         if hf_token:

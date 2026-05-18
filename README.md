@@ -6,7 +6,9 @@
 
 - `docs/README.md`
 - `docs/architecture.md`
+- `docs/config-schema-v2.md`
 - `docs/data-contracts/sft.md`
+- `docs/migration-v1-to-v2.md`
 - `docs/runs/sft.md`
 - `docs/experiments/mlflow.md`
 - `docs/runs/benchmarking.md`
