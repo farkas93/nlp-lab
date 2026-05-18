@@ -47,6 +47,28 @@
 - Lower `training.train_batch_size`.
 - Increase `gradient_accumulation_steps` to preserve effective batch size.
 
+## DPO manifest cannot be loaded
+
+- Verify `data.bucket`, `data.dataset_id`, and `data.dataset_version` resolve to an existing DPO manifest path.
+- Confirm manifest `splits` includes configured `data.train_split` and `data.eval_split` entries with valid `key` values.
+- Run `./start_dpo.sh <config>.yaml --dry-run-config` first to validate config resolution before launching training.
+
+## DPO row schema errors (`prompt/chosen/rejected`)
+
+- DPO training requires each split to contain `prompt`, `chosen`, and `rejected` columns.
+- Rebuild the upstream release if any split omits those fields.
+- Check `docs/data-contracts/dpo.md` for the expected row contract and recommended metadata.
+
+## DPO policy confirmation gate blocks non-interactive run
+
+- Datasets containing `P3` or `P4` require explicit confirmation before training.
+- In CI/non-interactive contexts, pass `--assume-yes` only for intentional runs.
+
+## DPO push blocked by policy class `P4`
+
+- If manifest governance includes `P4`, DPO training refuses to proceed when `hub.push_to_hub=true`.
+- Use a release profile that excludes `P4`, or run without hub publishing.
+
 ## MLflow run not visible
 
 - Check `MLFLOW_TRACKING_URI` in `.env` or YAML `tracking.mlflow_tracking_uri`.

@@ -50,3 +50,11 @@ Resolve and validate config only (no training):
 - If dataset governance includes `P3` or `P4`, training requires explicit confirmation.
 - Use `--assume-yes` for non-interactive intentional runs.
 - If governance includes `P4`, training refuses to continue when `hub.push_to_hub=true`.
+
+## DPO eval metrics (recommended)
+
+- Track pairwise preference quality with standard DPO validation loss and reward margin trend.
+- Add tool-call decision accuracy on eval examples where both `chosen` and `rejected` represent callable actions.
+- Add argument precision for tool rows by comparing predicted argument keys/values against expected fields.
+- Report both strict-match and relaxed-match slices (strict JSON equality, relaxed key overlap + normalized scalar values).
+- Segment metrics by `scenario_type` and `policy_class` to avoid hiding regressions in high-risk subsets.

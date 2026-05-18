@@ -55,8 +55,8 @@
 - No compatibility alias to legacy archived DPO flow.
 
 ## Next Action Queue (post-push)
-- [ ] Add DPO troubleshooting section in `docs/troubleshooting.md`.
-- [ ] Add small synthetic manifest fixture tests for `src/dpo_dataset_loader.py` and `dpo/run_config.py`.
+- [x] Add DPO troubleshooting section in `docs/troubleshooting.md`.
+- [x] Add small synthetic manifest fixture tests for `src/dpo_dataset_loader.py` and `dpo/run_config.py`.
 - [ ] Add DPO metric/eval notes (tool-call decision, arg precision) in docs.
 
 ## Upcoming Work Window (Bravo)
