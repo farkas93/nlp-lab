@@ -50,6 +50,9 @@ Main fields:
 - `model.owner` + `model.name` -> base model HF repo is auto-derived as `{owner}/{name}`
 - `training.*` -> experiment and training hyperparameters
 - `hub.owner` + publish flags -> adapter/full target repos are auto-derived with LoRA suffix policy
+- manifest governance metadata (`governance.policy_*`) -> policy class logging at train start and policy gates
+
+Policy enforcement helpers live in `src/eliza_trainer/common/data_policy.py` and are reusable for future DPO/GRPO manifest-based runners.
 
 See full runbook: `docs/runs/sft.md`.
 
@@ -74,6 +77,15 @@ Run with custom config path:
 ```bash
 ./start_sft.sh configs/sft_general_qwen3_5_0_8b.yaml
 ```
+
+If dataset policy classes include `P3` or `P4`, training requires explicit confirmation.
+Use `--assume-yes` for non-interactive runs:
+
+```bash
+./start_sft.sh configs/sft_general_qwen3_5_0_8b.yaml --assume-yes
+```
+
+Safety guard: when dataset policy class `P4` is present, training refuses to continue if `hub.push_to_hub=true`.
 
 For Ollama-first deployment, publish LoRA adapters from training, then export GGUF with:
 

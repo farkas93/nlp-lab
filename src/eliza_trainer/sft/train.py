@@ -15,6 +15,12 @@ from huggingface_hub import login
 from transformers import AutoTokenizer
 
 from ..common.runtime import configure_logging, ensure_cuda_alloc_conf, load_project_env
+from ..common.data_policy import (
+    confirm_or_abort,
+    is_push_blocked_for_p4,
+    requires_confirmation,
+    summarize_manifest_policy,
+)
 from .backends.trl_backend import run_trl_training
 from .backends.unsloth_backend import run_unsloth_training
 from .dataset_loader import (
@@ -35,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run-config",
         action="store_true",
         help="Resolve and validate config only, then exit",
+    )
+    parser.add_argument(
+        "--assume-yes",
+        action="store_true",
+        help="Auto-confirm policy gates that would otherwise require interactive approval",
     )
     return parser.parse_args()
 
@@ -243,6 +254,25 @@ def main() -> None:
             run_config.data.expected_manifest_sha256,
             dataset_result.manifest_sha256,
         )
+        policy_summary = summarize_manifest_policy(dataset_result.manifest)
+        logging.info(
+            "Dataset policy summary has_metadata=%s classes=%s max=%s counts=%s",
+            policy_summary.has_metadata,
+            policy_summary.classes_present,
+            policy_summary.max_policy_class,
+            policy_summary.class_counts,
+        )
+        if run_config.hub.push_to_hub and is_push_blocked_for_p4(policy_summary):
+            raise RuntimeError(
+                "Refusing to continue: dataset contains policy class P4 and hub.push_to_hub=true. "
+                "Disable hub.push_to_hub or use a release manifest without P4."
+            )
+        if requires_confirmation(policy_summary):
+            logging.warning(
+                "Dataset includes high-restriction policy classes (P3/P4). "
+                "Explicit confirmation is required unless --assume-yes is set."
+            )
+            confirm_or_abort(policy_summary, assume_yes=args.assume_yes)
 
         train_dataset, train_token_stats = tokenize_with_assistant_only_loss(
             dataset_result.train_dataset,
@@ -285,6 +315,15 @@ def main() -> None:
             )
             mlflow.log_param("model_name", run_config.model.model_name)
             mlflow.log_param("source_repo_lineage", source_repo_lineage)
+            mlflow.log_param(
+                "dataset_policy_classes",
+                ",".join(policy_summary.classes_present) if policy_summary.classes_present else "unknown",
+            )
+            mlflow.log_param("dataset_policy_max_class", policy_summary.max_policy_class)
+            mlflow.log_param(
+                "dataset_policy_counts",
+                json.dumps(policy_summary.class_counts, ensure_ascii=True, sort_keys=True),
+            )
             mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
             mlflow.log_param("backend", run_config.training.backend)
             mlflow.log_param("cache_mode", run_config.data.cache_mode)

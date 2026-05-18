@@ -35,6 +35,12 @@ Resolve and validate config only (no training):
 uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml --dry-run-config
 ```
 
+Bypass interactive policy confirmations (for non-interactive CI/jobs):
+
+```bash
+uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.eliza_trainer.sft.train --config configs/sft_general_qwen3_5_0_8b.yaml --assume-yes
+```
+
 ## Config fields
 
 - `config_schema_version`: must be `2`
@@ -58,6 +64,13 @@ uv run --python 3.12 --with-requirements requirements.sft-trl.txt python -m src.
 - `hub.publish_adapter`, `hub.publish_full_model`: explicit publish targets
 - `hub.adapter_tag_strategy`, `hub.full_model_tag_strategy`: `run_name` / `none` / `custom`
 - `hub.allow_existing_tags`: ignore tag `409 Conflict` and continue
+- dataset manifest governance metadata (`governance.policy_classes_present`, `governance.policy_class_counts`, `governance.max_policy_class`) is logged at train start
+
+Policy gates:
+
+- If manifest includes `P3` or `P4`, training requires explicit confirmation unless `--assume-yes` is provided.
+- Non-interactive runs fail closed when confirmation is required and `--assume-yes` is absent.
+- If manifest includes `P4` and `hub.push_to_hub=true`, training fails before training starts.
 
 Example hub config for adapter + merged publish:
 

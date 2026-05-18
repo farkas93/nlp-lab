@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_PATH="${1:-configs/sft_general_qwen3_5_0_8b.yaml}"
+CONFIG_PATH="configs/sft_general_qwen3_5_0_8b.yaml"
+if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  CONFIG_PATH="$1"
+  shift
+fi
+EXTRA_ARGS=("$@")
 
 if [ -f ".env" ]; then
   set -a
@@ -123,4 +128,4 @@ print("unsloth preflight OK")
 PY
 fi
 
-uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python -m src.eliza_trainer.sft.train --config "$CONFIG_PATH"
+uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python -m src.eliza_trainer.sft.train --config "$CONFIG_PATH" "${EXTRA_ARGS[@]}"
