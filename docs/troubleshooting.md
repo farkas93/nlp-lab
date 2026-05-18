@@ -26,7 +26,8 @@
 - Ensure `training.backend: unsloth`.
 - Ensure `requirements.sft-unsloth.txt` exists and includes `unsloth`.
 - Run via `./start_sft.sh ...` so backend-specific requirements are selected automatically.
-- Keep unsloth on the pinned overlay stack (`transformers==4.57.6`, `trl==0.24.0`, `peft==0.18.1`) unless you intentionally validate a newer matrix.
+- Keep unsloth on the pinned overlay stack (`unsloth==2026.5.2`, `unsloth_zoo==2026.5.1`, `transformers==5.5.0`, `trl==0.24.0`, `peft==0.18.1`) unless you intentionally validate a newer matrix.
+- `start_sft.sh` runs an unsloth preflight that prints resolved package versions and model type; for Qwen3.5, it fails early when `transformers<5.2.0`.
 - Verify torch/CUDA/transformers compatibility for your GPU runtime.
 
 ## Investigate crashed SFT runs

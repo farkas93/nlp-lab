@@ -25,6 +25,18 @@ print(backend)
 PY
 )"
 
+MODEL_NAME="$(python - <<'PY' "$CONFIG_PATH"
+import sys
+import yaml
+
+config_path = sys.argv[1]
+with open(config_path, "r", encoding="utf-8") as handle:
+    raw = yaml.safe_load(handle) or {}
+model = raw.get("model") or {}
+print(str(model.get("model_name", "")).strip())
+PY
+)"
+
 case "$BACKEND" in
   trl)
     REQUIREMENTS_FILE="requirements.sft-trl.txt"
@@ -77,9 +89,35 @@ echo "Running SFT backend=${BACKEND} with uv (Python 3.12) using config: ${CONFI
 
 if [ "$BACKEND" = "unsloth" ]; then
   echo "Preflight: validating unsloth import in uv environment..."
-  uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python - <<'PY'
-import unsloth  # noqa: F401
-print("unsloth import OK")
+  uv run --python 3.12 --with-requirements "$REQUIREMENTS_FILE" python - <<'PY' "$MODEL_NAME"
+import sys
+
+from packaging.version import Version
+import accelerate
+import peft
+import torch
+import transformers
+import trl
+import unsloth
+import unsloth_zoo
+from transformers import AutoConfig
+
+model_name = sys.argv[1]
+config = AutoConfig.from_pretrained(model_name)
+model_type = str(getattr(config, "model_type", ""))
+transformers_version = Version(transformers.__version__)
+
+print(f"unsloth preflight model={model_name}")
+print(f"versions torch={torch.__version__} transformers={transformers.__version__} trl={trl.__version__} peft={peft.__version__} accelerate={accelerate.__version__} unsloth={unsloth.__version__} unsloth_zoo={unsloth_zoo.__version__}")
+print(f"resolved_model_type={model_type}")
+
+if model_type == "qwen3_5" and transformers_version < Version("5.2.0"):
+    raise RuntimeError(
+        "Qwen3.5 requires transformers>=5.2.0 for unsloth backend; "
+        f"found {transformers.__version__}"
+    )
+
+print("unsloth preflight OK")
 PY
 fi
 
