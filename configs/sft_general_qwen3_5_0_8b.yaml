@@ -28,7 +28,7 @@ model:
 
 training:
   output_root: ./outputs
-  num_train_epochs: 5
+  num_train_epochs: 3
   learning_rate: 2.0e-5
   train_batch_size: 1
   eval_batch_size: 1

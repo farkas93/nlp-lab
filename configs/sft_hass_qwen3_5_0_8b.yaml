@@ -6,8 +6,8 @@ identity:
 
 data:
   bucket: sft-datasets
-  dataset_id: general
-  dataset_version: v1.0.1
+  dataset_id: home_assistant_tool_usage
+  dataset_version: v2026_05_20
   train_split: train
   eval_split: eval
   max_train_samples:
@@ -17,7 +17,7 @@ data:
 model:
   owner: Qwen
   name: Qwen3.5-0.8B
-  max_seq_len: 4092
+  max_seq_len: 2048
   use_bf16: true
   load_in_4bit: true
   lora_r: 16
