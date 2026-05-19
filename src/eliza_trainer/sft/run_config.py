@@ -109,6 +109,7 @@ class SFTTrackingConfig:
 @dataclass
 class SFTRuntimeConfig:
     hf_model_cache_dir: str = "./hf_models"
+    log_level: str = "INFO"
 
 
 @dataclass
@@ -432,6 +433,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
 
     runtime = SFTRuntimeConfig(
         hf_model_cache_dir=str(runtime_raw.get("hf_model_cache_dir", "./hf_models")),
+        log_level=str(runtime_raw.get("log_level", "INFO")).upper(),
     )
 
     return SFTRunConfig(

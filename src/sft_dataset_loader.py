@@ -159,6 +159,40 @@ def load_sft_manifest_dataset(
         download_mode=download_mode,
     )
 
+    # Location 1: Log raw dataset info after Parquet load
+    LOGGER.debug(
+        "Loaded raw datasets from manifest: train_rows=%s eval_rows=%s train_files=%s eval_files=%s",
+        len(train_dataset),
+        len(eval_dataset),
+        len(train_uris),
+        len(eval_uris),
+    )
+
+    # Log first row structure to verify schema
+    if len(train_dataset) > 0:
+        first_row = train_dataset[0]
+        LOGGER.debug(
+            "First train row keys: %s, has_messages=%s, has_target_text=%s, has_target_message=%s",
+            list(first_row.keys()),
+            'messages' in first_row,
+            'target_text' in first_row,
+            'target_message' in first_row,
+        )
+        if 'messages' in first_row:
+            messages = first_row['messages']
+            if isinstance(messages, list) and len(messages) > 0:
+                first_msg = messages[0]
+                if isinstance(first_msg, dict):
+                    LOGGER.debug(
+                        "First message structure: keys=%s types=%s",
+                        list(first_msg.keys()),
+                        {k: type(v).__name__ for k, v in first_msg.items()},
+                    )
+                else:
+                    LOGGER.debug("First message is not a dict: type=%s", type(first_msg).__name__)
+    else:
+        LOGGER.warning("Train dataset is EMPTY after Parquet load!")
+
     if max_train_samples is not None and len(train_dataset) > max_train_samples:
         train_dataset = train_dataset.select(range(max_train_samples))
     if max_eval_samples is not None and len(eval_dataset) > max_eval_samples:
@@ -448,6 +482,43 @@ def tokenize_with_assistant_only_loss(
             json.dumps(dropped_by_reason, ensure_ascii=True, sort_keys=True),
         )
 
+    # Location 2: Enhanced tokenization stats logging
+    rows_truncated = 0
+    if "__is_truncated__" in filtered.column_names:
+        rows_truncated = int(sum(int(value) for value in filtered["__is_truncated__"]))
+    
+    LOGGER.debug(
+        "Tokenization stats for split=%s: raw_rows=%s valid_rows=%s dropped=%s fit_fully=%s truncated=%s",
+        split_name,
+        len(tokenized),
+        len(filtered),
+        dropped_count,
+        len(filtered) - rows_truncated if len(filtered) > 0 else 0,
+        rows_truncated,
+    )
+
+    # If everything was dropped, log detailed diagnostics
+    if len(filtered) == 0 and len(tokenized) > 0:
+        LOGGER.error(
+            "CRITICAL: All %s rows dropped during tokenization for split=%s! Reasons: %s",
+            len(tokenized),
+            split_name,
+            json.dumps(dropped_by_reason, ensure_ascii=True, sort_keys=True, indent=2),
+        )
+        # Log a sample of dropped rows for debugging
+        if "__drop_reason__" in tokenized.column_names:
+            sample_size = min(3, len(tokenized))
+            LOGGER.error("Sample of dropped rows (first %s):", sample_size)
+            for i in range(sample_size):
+                row_data = tokenized[i]
+                LOGGER.error(
+                    "  Row %s: reason=%s, example_id=%s, session_id=%s",
+                    i,
+                    row_data.get("__drop_reason__", "unknown"),
+                    row_data.get("example_id", "missing"),
+                    row_data.get("session_id", "missing"),
+                )
+
     remove_columns = [
         column
         for column in filtered.column_names
@@ -460,9 +531,7 @@ def tokenize_with_assistant_only_loss(
 
     rows_total = len(tokenized)
     rows_valid_before_filter = len(filtered)
-    rows_truncated = 0
-    if "__is_truncated__" in filtered.column_names:
-        rows_truncated = int(sum(int(value) for value in filtered["__is_truncated__"]))
+    # rows_truncated already computed above in Location 2 logging
     rows_fit_fully = max(0, rows_valid_before_filter - rows_truncated)
 
     stats = AssistantOnlyTokenizationStats(

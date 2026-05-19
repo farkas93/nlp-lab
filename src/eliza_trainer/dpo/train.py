@@ -162,6 +162,7 @@ def _detect_source_repo_lineage(model_repo: str) -> str:
 
 
 def main() -> None:
+    # Initial logging setup with INFO level
     configure_logging()
     ensure_cuda_alloc_conf()
     args = parse_args()
@@ -183,6 +184,10 @@ def main() -> None:
         load_project_env(project_root)
 
         run_config = load_dpo_run_config(args.config)
+        
+        # Reconfigure logging with config-specified level
+        configure_logging(run_config.runtime.log_level)
+        
         apply_tracking_env(run_config)
         backend = run_config.training.backend
         run_name = run_config.training.run_name

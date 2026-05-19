@@ -185,6 +185,7 @@ def _detect_source_repo_lineage(model_repo: str) -> str:
 
 
 def main() -> None:
+    # Initial logging setup with INFO level
     configure_logging()
     ensure_cuda_alloc_conf()
     args = parse_args()
@@ -206,6 +207,10 @@ def main() -> None:
         load_project_env(project_root)
 
         run_config = load_sft_run_config(args.config)
+        
+        # Reconfigure logging with config-specified level
+        configure_logging(run_config.runtime.log_level)
+        
         apply_tracking_env(run_config)
         backend = run_config.training.backend
         run_name = run_config.training.run_name
@@ -241,6 +246,23 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
         tokenizer.padding_side = "left"
+
+        # Location 4: Test tokenizer chat template with a simple example
+        logging.debug("Testing tokenizer chat template compatibility...")
+        try:
+            test_messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hello"},
+            ]
+            test_prompt = tokenizer.apply_chat_template(
+                test_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            logging.debug("Tokenizer chat template test passed: %s", test_prompt[:100])
+        except Exception as e:
+            logging.error("Tokenizer chat template test FAILED: %s", e)
+            logging.error("This tokenizer may not support your dataset's message format")
 
         dataset_result = load_sft_manifest_dataset(
             manifest_uri=run_config.data.manifest_uri,
@@ -288,6 +310,46 @@ def main() -> None:
             split_name=run_config.data.eval_split,
             return_stats=True,
         )
+
+        # Location 3: Enhanced tokenization logging with drop diagnostics
+        logging.info(
+            "Tokenization complete: train_raw=%s->%s (dropped=%s) eval_raw=%s->%s (dropped=%s)",
+            train_token_stats.rows_total,
+            len(train_dataset),
+            train_token_stats.rows_dropped,
+            eval_token_stats.rows_total,
+            len(eval_dataset),
+            eval_token_stats.rows_dropped,
+        )
+
+        # Log drop reasons if significant
+        if train_token_stats.rows_dropped > 0:
+            logging.warning(
+                "Train tokenization dropped %s/%s rows (%.1f%%). Reasons: %s",
+                train_token_stats.rows_dropped,
+                train_token_stats.rows_total,
+                (train_token_stats.rows_dropped / train_token_stats.rows_total * 100),
+                json.dumps(train_token_stats.dropped_by_reason, ensure_ascii=True),
+            )
+
+        if eval_token_stats.rows_dropped > 0:
+            logging.warning(
+                "Eval tokenization dropped %s/%s rows (%.1f%%). Reasons: %s",
+                eval_token_stats.rows_dropped,
+                eval_token_stats.rows_total,
+                (eval_token_stats.rows_dropped / eval_token_stats.rows_total * 100),
+                json.dumps(eval_token_stats.dropped_by_reason, ensure_ascii=True),
+            )
+
+        # Critical error if train is empty
+        if len(train_dataset) == 0:
+            raise ValueError(
+                f"Training dataset is empty after tokenization! "
+                f"Raw rows: {train_token_stats.rows_total}, "
+                f"Dropped: {train_token_stats.rows_dropped}, "
+                f"Reasons: {train_token_stats.dropped_by_reason}. "
+                f"Check dataset schema compatibility with tokenizer."
+            )
 
         logging.info(
             "Prepared dataset backend=%s manifest_sha256=%s train_rows=%s eval_rows=%s cache_mode=%s",

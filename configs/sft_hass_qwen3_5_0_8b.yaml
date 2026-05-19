@@ -55,3 +55,4 @@ tracking:
 
 runtime:
   hf_model_cache_dir: ./hf_models
+  log_level: DEBUG
