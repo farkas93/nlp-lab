@@ -610,6 +610,27 @@ def tokenize_with_assistant_only_loss(
             return None
         role = item.get("role")
         content = item.get("content")
+        
+        # Handle assistant messages with tool_calls embedded in content as JSON string
+        # This handles dataset formats where tool calls are stored as:
+        # {"role": "assistant", "content": '{"tool_calls": [...]}'}
+        # Instead of the expected:
+        # {"role": "assistant", "content": null, "tool_calls": [...]}
+        if role == "assistant" and isinstance(content, str) and content.strip().startswith("{"):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and "tool_calls" in parsed:
+                    # Extract tool calls from the embedded JSON in content
+                    embedded_tool_calls = parsed.get("tool_calls")
+                    message: dict[str, Any] = {"role": role, "content": None}
+                    tool_calls = _normalize_tool_calls(embedded_tool_calls)
+                    if isinstance(tool_calls, list) and tool_calls:
+                        message["tool_calls"] = tool_calls
+                    return message
+            except (json.JSONDecodeError, TypeError):
+                pass  # Not valid JSON, fall through to normal processing
+        
+        # Standard message processing
         if not isinstance(role, str) or not isinstance(content, str):
             return None
         message: dict[str, Any] = {"role": role, "content": content}
