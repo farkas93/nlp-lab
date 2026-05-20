@@ -302,6 +302,7 @@ def main() -> None:
             max_seq_len=run_config.model.max_seq_len,
             split_name=run_config.data.train_split,
             return_stats=True,
+            tokenizer_type=run_config.runtime.tokenizer_type,
         )
         eval_dataset, eval_token_stats = tokenize_with_assistant_only_loss(
             dataset_result.eval_dataset,
@@ -309,6 +310,7 @@ def main() -> None:
             max_seq_len=run_config.model.max_seq_len,
             split_name=run_config.data.eval_split,
             return_stats=True,
+            tokenizer_type=run_config.runtime.tokenizer_type,
         )
 
         # Location 3: Enhanced tokenization logging with drop diagnostics

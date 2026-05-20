@@ -1,16 +1,310 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import fsspec
 from datasets import Dataset, DownloadMode, load_dataset
+
+
+# =============================================================================
+# Tool Call Normalizer System
+# =============================================================================
+# Different tokenizers expect different tool call formats:
+# - Qwen: flat structure, arguments as dict (iterates with .items())
+# - OpenAI/GPT: nested function wrapper, arguments as JSON string
+# - Gemma: similar to Qwen, flat structure with dict arguments
+# - Generic: safe fallback, minimal changes, dict arguments
+# =============================================================================
+
+
+class ToolCallNormalizer(ABC):
+    """Abstract base for tool call normalization strategies.
+    
+    Different tokenizer families have different requirements for how tool calls
+    are structured in chat messages. This class hierarchy allows us to adapt
+    the normalization based on the target tokenizer.
+    """
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Human-readable name for logging"""
+        pass
+    
+    @property
+    @abstractmethod
+    def should_stringify_arguments(self) -> bool:
+        """Whether to convert arguments dict → JSON string.
+        
+        Returns:
+            True for OpenAI-style tokenizers (expect JSON string)
+            False for Qwen-style tokenizers (expect dict for .items() iteration)
+        """
+        pass
+    
+    @abstractmethod
+    def transform_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        """Transform a single tool call to the target format.
+        
+        Args:
+            tool_call: Original tool call dict with 'name' and 'arguments'
+            
+        Returns:
+            Transformed tool call dict in tokenizer-specific format
+        """
+        pass
+    
+    def normalize_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Normalize a list of tool calls.
+        
+        Args:
+            tool_calls: List of tool call dicts
+            
+        Returns:
+            List of normalized tool call dicts
+        """
+        return [self.transform_tool_call(tc) for tc in tool_calls]
+
+
+class QwenNormalizer(ToolCallNormalizer):
+    """Normalizer for Qwen family tokenizers (Qwen, Qwen2, Qwen3, Qwen3.5).
+    
+    Qwen's chat template expects:
+    - Flat structure: tool_calls[].name (not nested in 'function')
+    - Arguments as dict (template iterates with .items())
+    - No required 'id' or 'type' fields
+    
+    Template excerpt:
+        {%- for args_name, args_value in tool_call.arguments|items %}
+    """
+    
+    @property
+    def name(self) -> str:
+        return "QwenNormalizer"
+    
+    @property
+    def should_stringify_arguments(self) -> bool:
+        return False  # Keep as dict for .items() iteration
+    
+    def transform_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        # Qwen expects flat structure - keep as-is
+        # Handle both flat and nested formats gracefully
+        if "function" in tool_call:
+            # Convert nested to flat
+            func = tool_call["function"]
+            return {
+                "name": func.get("name"),
+                "arguments": func.get("arguments", {}),
+            }
+        return {
+            "name": tool_call.get("name"),
+            "arguments": tool_call.get("arguments", {}),
+        }
+
+
+class GemmaNormalizer(ToolCallNormalizer):
+    """Normalizer for Google Gemma family tokenizers.
+    
+    Gemma's tool call handling is similar to Qwen:
+    - Flat structure with 'name' and 'arguments'
+    - Arguments as dict
+    - No special wrappers required
+    """
+    
+    @property
+    def name(self) -> str:
+        return "GemmaNormalizer"
+    
+    @property
+    def should_stringify_arguments(self) -> bool:
+        return False  # Keep as dict
+    
+    def transform_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        # Similar to Qwen - flat structure
+        if "function" in tool_call:
+            func = tool_call["function"]
+            return {
+                "name": func.get("name"),
+                "arguments": func.get("arguments", {}),
+            }
+        return {
+            "name": tool_call.get("name"),
+            "arguments": tool_call.get("arguments", {}),
+        }
+
+
+class OpenAINormalizer(ToolCallNormalizer):
+    """Normalizer for OpenAI/GPT family tokenizers.
+    
+    OpenAI's format expects:
+    - Nested structure: tool_calls[].function.name
+    - Arguments as JSON string (not dict)
+    - Required 'id' and 'type' fields
+    
+    Example output:
+        {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+                "name": "turn_on_lights",
+                "arguments": '{"room": "living"}'  # JSON string!
+            }
+        }
+    """
+    
+    @property
+    def name(self) -> str:
+        return "OpenAINormalizer"
+    
+    @property
+    def should_stringify_arguments(self) -> bool:
+        return True  # Convert to JSON string
+    
+    def _generate_call_id(self, tool_call: dict[str, Any]) -> str:
+        """Generate a deterministic call ID based on tool call content."""
+        # Use existing ID if present
+        if tool_call.get("id"):
+            return str(tool_call["id"])
+        # Generate based on content hash
+        content = json.dumps(tool_call, sort_keys=True, ensure_ascii=True)
+        return f"call_{hashlib.md5(content.encode()).hexdigest()[:12]}"
+    
+    def transform_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        # Handle already-nested format
+        if "function" in tool_call:
+            func = tool_call["function"]
+            name = func.get("name")
+            arguments = func.get("arguments", {})
+        else:
+            name = tool_call.get("name")
+            arguments = tool_call.get("arguments", {})
+        
+        # Convert arguments to JSON string if not already
+        if isinstance(arguments, (dict, list)):
+            arguments_str = json.dumps(arguments, ensure_ascii=True, sort_keys=True)
+        else:
+            arguments_str = str(arguments) if arguments else "{}"
+        
+        return {
+            "id": self._generate_call_id(tool_call),
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": arguments_str,
+            }
+        }
+
+
+class GenericNormalizer(ToolCallNormalizer):
+    """Safe fallback normalizer for unknown tokenizers.
+    
+    Uses minimal transformation:
+    - Keeps flat structure (most common)
+    - Keeps arguments as dict (safer than string)
+    - No required wrapper fields
+    
+    This is a safe default that works with most tokenizers that support
+    tool calls, though it may not be optimal for all.
+    """
+    
+    @property
+    def name(self) -> str:
+        return "GenericNormalizer"
+    
+    @property
+    def should_stringify_arguments(self) -> bool:
+        return False  # Safe default: keep as dict
+    
+    def transform_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        # Flatten if nested, otherwise keep as-is
+        if "function" in tool_call:
+            func = tool_call["function"]
+            return {
+                "name": func.get("name"),
+                "arguments": func.get("arguments", {}),
+            }
+        return {
+            "name": tool_call.get("name"),
+            "arguments": tool_call.get("arguments", {}),
+        }
+
+
+# =============================================================================
+# Tokenizer Detection
+# =============================================================================
+
+
+def detect_tokenizer_type(tokenizer: Any, explicit_type: str | None = None) -> str:
+    """Detect tokenizer type from model name or use explicit override.
+    
+    Args:
+        tokenizer: HuggingFace tokenizer instance
+        explicit_type: Optional explicit type override from config
+        
+    Returns:
+        Detected tokenizer type string: 'qwen', 'gemma', 'openai', or 'generic'
+    """
+    if explicit_type:
+        normalized = explicit_type.strip().lower()
+        LOGGER.info("Using explicit tokenizer_type from config: %s", normalized)
+        return normalized
+    
+    # Get model name from tokenizer
+    model_name = getattr(tokenizer, 'name_or_path', '') or ''
+    model_name_lower = model_name.lower()
+    
+    # Pattern matching for known model families
+    if 'qwen' in model_name_lower:
+        detected = 'qwen'
+    elif 'gemma' in model_name_lower:
+        detected = 'gemma'
+    elif any(x in model_name_lower for x in ['gpt', 'openai', 'davinci', 'turbo']):
+        detected = 'openai'
+    elif 'claude' in model_name_lower or 'anthropic' in model_name_lower:
+        detected = 'openai'  # Claude uses similar format to OpenAI
+    else:
+        detected = 'generic'
+    
+    LOGGER.info(
+        "Auto-detected tokenizer_type=%s from model_name=%s",
+        detected, model_name
+    )
+    return detected
+
+
+def get_normalizer(tokenizer_type: str) -> ToolCallNormalizer:
+    """Factory function to get appropriate normalizer for tokenizer type.
+    
+    Args:
+        tokenizer_type: Type string from detection or config
+        
+    Returns:
+        Appropriate ToolCallNormalizer instance
+    """
+    normalizers: dict[str, ToolCallNormalizer] = {
+        'qwen': QwenNormalizer(),
+        'gemma': GemmaNormalizer(),
+        'openai': OpenAINormalizer(),
+        'gpt': OpenAINormalizer(),
+        'generic': GenericNormalizer(),
+    }
+    
+    normalizer = normalizers.get(tokenizer_type.lower(), GenericNormalizer())
+    LOGGER.debug("Using %s for tokenizer_type=%s", normalizer.name, tokenizer_type)
+    return normalizer
+
+
+# =============================================================================
+# Data Classes
+# =============================================================================
 
 
 @dataclass
@@ -265,34 +559,51 @@ def tokenize_with_assistant_only_loss(
     split_name: str = "unknown",
     fail_on_template_error: bool = False,
     return_stats: bool = False,
+    tokenizer_type: str | None = None,
 ) -> Dataset | tuple[Dataset, AssistantOnlyTokenizationStats]:
+    """Tokenize dataset with assistant-only loss masking.
+    
+    Args:
+        dataset: Input dataset with 'messages' and 'target_text'/'target_message' columns
+        tokenizer: HuggingFace tokenizer instance
+        max_seq_len: Maximum sequence length for tokenization
+        split_name: Name of the split (for logging)
+        fail_on_template_error: Whether to raise on chat template errors
+        return_stats: Whether to return tokenization statistics
+        tokenizer_type: Explicit tokenizer type override (auto-detected if None).
+                       Supported: 'qwen', 'gemma', 'openai', 'generic'
+    
+    Returns:
+        Tokenized dataset, optionally with tokenization statistics
+    """
+    # Detect tokenizer type and get appropriate normalizer
+    detected_type = detect_tokenizer_type(tokenizer, tokenizer_type)
+    normalizer = get_normalizer(detected_type)
+    
+    LOGGER.debug(
+        "Tokenization using %s (detected_type=%s, explicit=%s)",
+        normalizer.name,
+        detected_type,
+        tokenizer_type,
+    )
+
     def _normalize_tool_calls(value: Any) -> list[Any] | None:
+        """Normalize tool calls using the detected normalizer strategy."""
         if not isinstance(value, list):
             return None
-        normalized: list[Any] = []
+        
+        # First, do basic structural normalization
+        basic_normalized: list[dict[str, Any]] = []
         for item in value:
             if not isinstance(item, dict):
-                normalized.append(item)
-                continue
-            normalized_item: dict[str, Any] = {}
-            for key, field_value in item.items():
-                if key == "arguments" and isinstance(field_value, (dict, list)):
-                    normalized_item[key] = json.dumps(field_value, ensure_ascii=True, sort_keys=True)
-                    continue
-                if key == "function" and isinstance(field_value, dict):
-                    function_payload = dict(field_value)
-                    function_arguments = function_payload.get("arguments")
-                    if isinstance(function_arguments, (dict, list)):
-                        function_payload["arguments"] = json.dumps(
-                            function_arguments,
-                            ensure_ascii=True,
-                            sort_keys=True,
-                        )
-                    normalized_item[key] = function_payload
-                    continue
-                normalized_item[key] = field_value
-            normalized.append(normalized_item)
-        return normalized
+                continue  # Skip non-dict items
+            basic_normalized.append(item)
+        
+        if not basic_normalized:
+            return None
+        
+        # Apply tokenizer-specific transformation
+        return normalizer.normalize_tool_calls(basic_normalized)
 
     def _normalize_chat_message(item: Any) -> dict[str, Any] | None:
         if not isinstance(item, dict):

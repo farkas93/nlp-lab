@@ -117,6 +117,7 @@ class DPOTrackingConfig:
 class DPORuntimeConfig:
     hf_model_cache_dir: str = "./hf_models"
     log_level: str = "INFO"
+    tokenizer_type: str | None = None  # Auto-detected if None. Options: qwen, gemma, openai, generic
 
 
 @dataclass
@@ -449,6 +450,7 @@ def load_dpo_run_config(config_path: str) -> DPORunConfig:
     runtime = DPORuntimeConfig(
         hf_model_cache_dir=str(runtime_raw.get("hf_model_cache_dir", "./hf_models")),
         log_level=str(runtime_raw.get("log_level", "INFO")).upper(),
+        tokenizer_type=runtime_raw.get("tokenizer_type"),  # None for auto-detection
     )
 
     return DPORunConfig(

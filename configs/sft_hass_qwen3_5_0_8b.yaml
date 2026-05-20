@@ -56,3 +56,4 @@ tracking:
 runtime:
   hf_model_cache_dir: ./hf_models
   log_level: DEBUG
+  # tokenizer_type: qwen  # Auto-detected from model name. Options: qwen, gemma, openai, generic
