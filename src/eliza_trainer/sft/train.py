@@ -25,7 +25,7 @@ from .backends.trl_backend import run_trl_training
 from .backends.unsloth_backend import run_unsloth_training
 from .dataset_loader import (
     load_sft_manifest_dataset,
-    tokenize_with_assistant_only_loss,
+    tokenize_with_loss_mode,
 )
 from .run_config import apply_tracking_env, load_sft_run_config
 
@@ -296,18 +296,22 @@ def main() -> None:
             )
             confirm_or_abort(policy_summary, assume_yes=args.assume_yes)
 
-        train_dataset, train_token_stats = tokenize_with_assistant_only_loss(
+        train_dataset, train_token_stats = tokenize_with_loss_mode(
             dataset_result.train_dataset,
             tokenizer=tokenizer,
             max_seq_len=run_config.model.max_seq_len,
+            loss_mode=run_config.model.loss_mode,
+            prompt_loss_weight=run_config.model.prompt_loss_weight,
             split_name=run_config.data.train_split,
             return_stats=True,
             tokenizer_type=run_config.runtime.tokenizer_type,
         )
-        eval_dataset, eval_token_stats = tokenize_with_assistant_only_loss(
+        eval_dataset, eval_token_stats = tokenize_with_loss_mode(
             dataset_result.eval_dataset,
             tokenizer=tokenizer,
             max_seq_len=run_config.model.max_seq_len,
+            loss_mode=run_config.model.loss_mode,
+            prompt_loss_weight=run_config.model.prompt_loss_weight,
             split_name=run_config.data.eval_split,
             return_stats=True,
             tokenizer_type=run_config.runtime.tokenizer_type,

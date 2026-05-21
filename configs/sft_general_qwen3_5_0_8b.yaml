@@ -21,6 +21,12 @@ model:
   max_seq_len: 2048
   use_bf16: true
   load_in_4bit: true
+  # Loss mode: "assistant_only" | "full_conversation" | "weighted"
+  # - assistant_only: Traditional SFT, loss only on assistant responses
+  # - full_conversation: Loss on all tokens (can reduce overfitting)
+  # - weighted: Fractional weight on prompts via prompt_loss_weight
+  loss_mode: full_conversation
+  # prompt_loss_weight: 0.25  # Only used when loss_mode=weighted (0.0-1.0)
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.05

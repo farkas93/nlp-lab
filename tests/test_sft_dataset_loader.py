@@ -11,9 +11,10 @@ from datasets import Dataset
 
 from src.eliza_trainer.sft.dataset_loader import (
     load_sft_manifest_dataset,
+    tokenize_with_loss_mode,
     tokenize_with_assistant_only_loss,
 )
-from src.eliza_trainer.losses import AssistantOnlyDataCollator
+from src.eliza_trainer.losses import AssistantOnlyDataCollator, DataCollatorWithLossMode
 
 
 class _DummyTokenizer:
@@ -245,6 +246,280 @@ class SFTDatasetLoaderTests(unittest.TestCase):
 
             self.assertEqual(len(result.train_dataset), 1)
             self.assertEqual(len(result.eval_dataset), 1)
+
+
+class LossModeTests(unittest.TestCase):
+    """Tests for the three loss modes: assistant_only, full_conversation, weighted."""
+
+    def test_tokenize_assistant_only_mode_masks_prompt(self) -> None:
+        """Test that assistant_only mode masks prompt tokens with -100."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [
+                    {"role": "system", "content": "be concise"},
+                    {"role": "user", "content": "say hi"},
+                ],
+                "target_text": "hello",
+            }
+        ])
+
+        tokenized = tokenize_with_loss_mode(
+            ds, 
+            tokenizer=tokenizer, 
+            max_seq_len=512,
+            loss_mode="assistant_only"
+        )
+        row = tokenized[0]
+
+        # In assistant_only mode, prompt tokens should be masked with -100
+        self.assertEqual(len(row["input_ids"]), len(row["labels"]))
+        self.assertIn(-100, row["labels"])
+        # Response tokens should NOT be -100
+        self.assertTrue(any(label != -100 for label in row["labels"]))
+
+    def test_tokenize_full_conversation_mode_no_masking(self) -> None:
+        """Test that full_conversation mode does not mask any tokens."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [
+                    {"role": "system", "content": "be concise"},
+                    {"role": "user", "content": "say hi"},
+                ],
+                "target_text": "hello",
+            }
+        ])
+
+        tokenized = tokenize_with_loss_mode(
+            ds, 
+            tokenizer=tokenizer, 
+            max_seq_len=512,
+            loss_mode="full_conversation"
+        )
+        row = tokenized[0]
+
+        # In full_conversation mode, NO tokens should be masked
+        self.assertEqual(len(row["input_ids"]), len(row["labels"]))
+        self.assertNotIn(-100, row["labels"])
+        # Labels should equal input_ids (no masking)
+        self.assertEqual(row["input_ids"], row["labels"])
+
+    def test_tokenize_weighted_mode_creates_loss_weights(self) -> None:
+        """Test that weighted mode creates loss_weights tensor."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        tokenized = tokenize_with_loss_mode(
+            ds, 
+            tokenizer=tokenizer, 
+            max_seq_len=512,
+            loss_mode="weighted",
+            prompt_loss_weight=0.3
+        )
+        row = tokenized[0]
+
+        # Should have loss_weights column
+        self.assertIn("loss_weights", row)
+        self.assertEqual(len(row["loss_weights"]), len(row["input_ids"]))
+        
+        # Labels should not be masked (weighted mode uses weights instead)
+        self.assertNotIn(-100, row["labels"])
+        
+        # Should have both weight values: 0.3 for prompt, 1.0 for response
+        weights = row["loss_weights"]
+        self.assertTrue(any(abs(w - 0.3) < 0.01 for w in weights))
+        self.assertTrue(any(abs(w - 1.0) < 0.01 for w in weights))
+
+    def test_tokenize_weighted_mode_respects_weight_value(self) -> None:
+        """Test that different prompt_loss_weight values are applied correctly."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        for weight in [0.0, 0.25, 0.5, 1.0]:
+            tokenized = tokenize_with_loss_mode(
+                ds, 
+                tokenizer=tokenizer, 
+                max_seq_len=512,
+                loss_mode="weighted",
+                prompt_loss_weight=weight
+            )
+            row = tokenized[0]
+            
+            # Verify weight is applied
+            self.assertTrue(any(abs(w - weight) < 0.01 for w in row["loss_weights"]))
+
+    def test_tokenize_invalid_loss_mode_raises_error(self) -> None:
+        """Test that invalid loss_mode raises ValueError."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_with_loss_mode(
+                ds, 
+                tokenizer=tokenizer, 
+                max_seq_len=512,
+                loss_mode="invalid_mode"
+            )
+        self.assertIn("Invalid loss_mode", str(ctx.exception))
+
+    def test_tokenize_weighted_mode_invalid_weight_raises_error(self) -> None:
+        """Test that invalid prompt_loss_weight raises ValueError."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        # Test weight > 1.0
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_with_loss_mode(
+                ds, 
+                tokenizer=tokenizer, 
+                max_seq_len=512,
+                loss_mode="weighted",
+                prompt_loss_weight=1.5
+            )
+        self.assertIn("prompt_loss_weight", str(ctx.exception))
+
+        # Test weight < 0.0
+        with self.assertRaises(ValueError) as ctx:
+            tokenize_with_loss_mode(
+                ds, 
+                tokenizer=tokenizer, 
+                max_seq_len=512,
+                loss_mode="weighted",
+                prompt_loss_weight=-0.1
+            )
+        self.assertIn("prompt_loss_weight", str(ctx.exception))
+
+    def test_collator_handles_loss_weights(self) -> None:
+        """Test that collator properly pads loss_weights."""
+        tokenizer = _DummyTokenizer()
+        
+        # Create two features with different lengths to test padding
+        feature1 = {
+            "input_ids": [1, 2, 3],
+            "attention_mask": [1, 1, 1],
+            "labels": [1, 2, 3],
+            "loss_weights": [0.25, 0.25, 1.0],
+        }
+        feature2 = {
+            "input_ids": [4, 5, 6, 7, 8],
+            "attention_mask": [1, 1, 1, 1, 1],
+            "labels": [4, 5, 6, 7, 8],
+            "loss_weights": [0.25, 0.25, 1.0, 1.0, 1.0],
+        }
+        
+        collator = DataCollatorWithLossMode(tokenizer=tokenizer)
+        batch = collator([feature1, feature2])
+        
+        # Should have loss_weights in output
+        self.assertIn("loss_weights", batch)
+        self.assertEqual(batch["loss_weights"].shape, batch["input_ids"].shape)
+        
+        # Padding should have weight 0.0
+        # feature1 gets padded from length 3 to 5
+        self.assertEqual(batch["loss_weights"][0, 3].item(), 0.0)
+        self.assertEqual(batch["loss_weights"][0, 4].item(), 0.0)
+
+    def test_collator_works_without_loss_weights(self) -> None:
+        """Test that collator works for non-weighted modes (no loss_weights)."""
+        tokenizer = _DummyTokenizer()
+        
+        # Features without loss_weights (assistant_only or full_conversation mode)
+        feature1 = {
+            "input_ids": [1, 2, 3],
+            "attention_mask": [1, 1, 1],
+            "labels": [-100, -100, 3],  # assistant_only style
+        }
+        feature2 = {
+            "input_ids": [4, 5, 6, 7],
+            "attention_mask": [1, 1, 1, 1],
+            "labels": [-100, -100, 6, 7],
+        }
+        
+        collator = DataCollatorWithLossMode(tokenizer=tokenizer)
+        batch = collator([feature1, feature2])
+        
+        # Should NOT have loss_weights
+        self.assertNotIn("loss_weights", batch)
+        # Should have standard fields
+        self.assertIn("input_ids", batch)
+        self.assertIn("attention_mask", batch)
+        self.assertIn("labels", batch)
+
+    def test_backward_compatibility_alias(self) -> None:
+        """Test that tokenize_with_assistant_only_loss still works as alias."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        # Use the old function name
+        tokenized = tokenize_with_assistant_only_loss(
+            ds, 
+            tokenizer=tokenizer, 
+            max_seq_len=512
+        )
+        row = tokenized[0]
+
+        # Should behave like assistant_only mode
+        self.assertIn(-100, row["labels"])
+
+    def test_tokenize_stats_include_loss_mode(self) -> None:
+        """Test that tokenization stats include loss_mode information."""
+        tokenizer = _DummyTokenizer()
+        ds = Dataset.from_list([
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "target_text": "hello",
+            }
+        ])
+
+        # Test assistant_only
+        _, stats = tokenize_with_loss_mode(
+            ds, tokenizer=tokenizer, max_seq_len=512,
+            loss_mode="assistant_only", return_stats=True
+        )
+        self.assertEqual(stats.loss_mode, "assistant_only")
+        self.assertIsNone(stats.prompt_loss_weight)
+
+        # Test full_conversation
+        _, stats = tokenize_with_loss_mode(
+            ds, tokenizer=tokenizer, max_seq_len=512,
+            loss_mode="full_conversation", return_stats=True
+        )
+        self.assertEqual(stats.loss_mode, "full_conversation")
+        self.assertIsNone(stats.prompt_loss_weight)
+
+        # Test weighted
+        _, stats = tokenize_with_loss_mode(
+            ds, tokenizer=tokenizer, max_seq_len=512,
+            loss_mode="weighted", prompt_loss_weight=0.25, return_stats=True
+        )
+        self.assertEqual(stats.loss_mode, "weighted")
+        self.assertEqual(stats.prompt_loss_weight, 0.25)
 
 
 if __name__ == "__main__":

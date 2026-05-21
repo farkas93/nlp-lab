@@ -317,13 +317,20 @@ class SFTManifestLoadResult:
 
 
 @dataclass
-class AssistantOnlyTokenizationStats:
+class TokenizationStats:
+    """Statistics from tokenization with configurable loss mode.
+    
+    Renamed from AssistantOnlyTokenizationStats to reflect support for
+    multiple loss modes: assistant_only, full_conversation, weighted.
+    """
     rows_total: int
     rows_valid_before_filter: int
     rows_fit_fully: int
     rows_truncated: int
     rows_dropped: int
     dropped_by_reason: dict[str, int]
+    loss_mode: str = "full_conversation"
+    prompt_loss_weight: float | None = None  # Only for weighted mode
 
     @property
     def fit_pct(self) -> float:
@@ -336,6 +343,10 @@ class AssistantOnlyTokenizationStats:
         if self.rows_valid_before_filter <= 0:
             return 0.0
         return (self.rows_truncated / self.rows_valid_before_filter) * 100.0
+
+
+# Backward compatibility alias
+AssistantOnlyTokenizationStats = TokenizationStats
 
 
 LOGGER = logging.getLogger(__name__)
@@ -551,22 +562,36 @@ def _build_template_debug_payload(
     return payload
 
 
-def tokenize_with_assistant_only_loss(
+def tokenize_with_loss_mode(
     dataset: Dataset,
     tokenizer,
     max_seq_len: int,
+    loss_mode: str = "full_conversation",
+    prompt_loss_weight: float = 0.0,
     *,
     split_name: str = "unknown",
     fail_on_template_error: bool = False,
     return_stats: bool = False,
     tokenizer_type: str | None = None,
-) -> Dataset | tuple[Dataset, AssistantOnlyTokenizationStats]:
-    """Tokenize dataset with assistant-only loss masking.
+) -> Dataset | tuple[Dataset, TokenizationStats]:
+    """Tokenize dataset with configurable loss masking.
+    
+    This function supports three loss modes for SFT training:
+    - assistant_only: Traditional SFT, loss only on response tokens (prompt masked)
+    - full_conversation: Loss on all tokens (no masking except padding)
+    - weighted: Fractional loss weight on prompt tokens, full weight on response
     
     Args:
         dataset: Input dataset with 'messages' and 'target_text'/'target_message' columns
         tokenizer: HuggingFace tokenizer instance
         max_seq_len: Maximum sequence length for tokenization
+        loss_mode: Loss computation strategy. Options:
+            - "assistant_only": Mask prompt tokens (traditional SFT)
+            - "full_conversation": No masking, loss on all tokens
+            - "weighted": Apply prompt_loss_weight to prompt, 1.0 to response
+        prompt_loss_weight: Weight for prompt tokens when loss_mode="weighted".
+            Range 0.0-1.0. Research suggests 0.1-0.5 is often optimal. Ignored for
+            other loss modes.
         split_name: Name of the split (for logging)
         fail_on_template_error: Whether to raise on chat template errors
         return_stats: Whether to return tokenization statistics
@@ -575,16 +600,37 @@ def tokenize_with_assistant_only_loss(
     
     Returns:
         Tokenized dataset, optionally with tokenization statistics
+        
+    References:
+        - Shi et al. (2024) "Instruction Tuning With Loss Over Instructions"
+        - Huerta-Enochian & Ko (2024) "Instruction Fine-Tuning: Does Prompt Loss Matter?"
     """
+    # Validate loss_mode
+    valid_loss_modes = {"assistant_only", "full_conversation", "weighted"}
+    if loss_mode not in valid_loss_modes:
+        raise ValueError(
+            f"Invalid loss_mode: {loss_mode}. "
+            f"Must be one of: {', '.join(sorted(valid_loss_modes))}"
+        )
+    
+    # Validate prompt_loss_weight for weighted mode
+    if loss_mode == "weighted":
+        if not 0.0 <= prompt_loss_weight <= 1.0:
+            raise ValueError(
+                f"prompt_loss_weight must be between 0.0 and 1.0, got {prompt_loss_weight}"
+            )
+    
     # Detect tokenizer type and get appropriate normalizer
     detected_type = detect_tokenizer_type(tokenizer, tokenizer_type)
     normalizer = get_normalizer(detected_type)
     
     LOGGER.debug(
-        "Tokenization using %s (detected_type=%s, explicit=%s)",
+        "Tokenization using %s (detected_type=%s, explicit=%s, loss_mode=%s, prompt_weight=%s)",
         normalizer.name,
         detected_type,
         tokenizer_type,
+        loss_mode,
+        prompt_loss_weight if loss_mode == "weighted" else "N/A",
     )
 
     def _normalize_tool_calls(value: Any) -> list[Any] | None:
@@ -782,10 +828,31 @@ def tokenize_with_assistant_only_loss(
 
         attention_mask = [1] * len(full_ids)
         labels = full_ids.copy()
-        for idx in range(prompt_len):
-            labels[idx] = -100
+        
+        # Apply loss masking based on mode
+        loss_weights: list[float] | None = None
+        
+        if loss_mode == "assistant_only":
+            # Traditional SFT: mask prompt tokens completely
+            for idx in range(prompt_len):
+                labels[idx] = -100
+        elif loss_mode == "full_conversation":
+            # No masking: model learns from all tokens
+            # Research shows this can reduce overfitting and improve performance
+            pass
+        elif loss_mode == "weighted":
+            # Weighted loss: prompt tokens get fractional weight, response tokens get 1.0
+            loss_weights = []
+            for idx in range(len(full_ids)):
+                if idx < prompt_len:
+                    loss_weights.append(prompt_loss_weight)
+                else:
+                    loss_weights.append(1.0)
+        else:
+            # Should never reach here due to validation, but defensive
+            raise ValueError(f"Unhandled loss_mode: {loss_mode}")
 
-        return {
+        result: dict[str, Any] = {
             "__drop__": 0,
             "__drop_reason": "",
             "__is_truncated__": is_truncated,
@@ -793,6 +860,12 @@ def tokenize_with_assistant_only_loss(
             "attention_mask": attention_mask,
             "labels": labels,
         }
+        
+        # Only include loss_weights if using weighted mode
+        if loss_weights is not None:
+            result["loss_weights"] = loss_weights
+        
+        return result
 
     tokenized = dataset.map(_tokenize)
 
@@ -807,9 +880,10 @@ def tokenize_with_assistant_only_loss(
     dropped_count = len(tokenized) - len(filtered)
     if dropped_count > 0:
         LOGGER.warning(
-            "Dropped %s/%s rows during assistant-only tokenization for split=%s reasons=%s",
+            "Dropped %s/%s rows during tokenization (loss_mode=%s) for split=%s reasons=%s",
             dropped_count,
             len(tokenized),
+            loss_mode,
             split_name,
             json.dumps(dropped_by_reason, ensure_ascii=True, sort_keys=True),
         )
@@ -820,8 +894,9 @@ def tokenize_with_assistant_only_loss(
         rows_truncated = int(sum(int(value) for value in filtered["__is_truncated__"]))
     
     LOGGER.debug(
-        "Tokenization stats for split=%s: raw_rows=%s valid_rows=%s dropped=%s fit_fully=%s truncated=%s",
+        "Tokenization stats for split=%s loss_mode=%s: raw_rows=%s valid_rows=%s dropped=%s fit_fully=%s truncated=%s",
         split_name,
+        loss_mode,
         len(tokenized),
         len(filtered),
         dropped_count,
@@ -851,10 +926,15 @@ def tokenize_with_assistant_only_loss(
                     row_data.get("session_id", "missing"),
                 )
 
+    # Columns to keep in the final dataset
+    keep_columns = {"input_ids", "attention_mask", "labels"}
+    if loss_mode == "weighted":
+        keep_columns.add("loss_weights")
+    
     remove_columns = [
         column
         for column in filtered.column_names
-        if column not in {"input_ids", "attention_mask", "labels"}
+        if column not in keep_columns
     ]
     filtered_clean = filtered.remove_columns(remove_columns)
 
@@ -866,12 +946,46 @@ def tokenize_with_assistant_only_loss(
     # rows_truncated already computed above in Location 2 logging
     rows_fit_fully = max(0, rows_valid_before_filter - rows_truncated)
 
-    stats = AssistantOnlyTokenizationStats(
+    stats = TokenizationStats(
         rows_total=rows_total,
         rows_valid_before_filter=rows_valid_before_filter,
         rows_fit_fully=rows_fit_fully,
         rows_truncated=rows_truncated,
         rows_dropped=dropped_count,
         dropped_by_reason=dropped_by_reason,
+        loss_mode=loss_mode,
+        prompt_loss_weight=prompt_loss_weight if loss_mode == "weighted" else None,
     )
     return filtered_clean, stats
+
+
+# Backward compatibility alias
+def tokenize_with_assistant_only_loss(
+    dataset: Dataset,
+    tokenizer,
+    max_seq_len: int,
+    *,
+    split_name: str = "unknown",
+    fail_on_template_error: bool = False,
+    return_stats: bool = False,
+    tokenizer_type: str | None = None,
+) -> Dataset | tuple[Dataset, TokenizationStats]:
+    """Backward-compatible wrapper for tokenize_with_loss_mode.
+    
+    Deprecated: Use tokenize_with_loss_mode with loss_mode="assistant_only" instead.
+    
+    This function maintains backward compatibility for existing code that uses
+    tokenize_with_assistant_only_loss. It delegates to tokenize_with_loss_mode
+    with loss_mode="assistant_only".
+    """
+    return tokenize_with_loss_mode(
+        dataset=dataset,
+        tokenizer=tokenizer,
+        max_seq_len=max_seq_len,
+        loss_mode="assistant_only",
+        prompt_loss_weight=0.0,
+        split_name=split_name,
+        fail_on_template_error=fail_on_template_error,
+        return_stats=return_stats,
+        tokenizer_type=tokenizer_type,
+    )

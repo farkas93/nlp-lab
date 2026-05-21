@@ -8,7 +8,8 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import BitsAndBytesConfig, Trainer, TrainingArguments
 
 from src import model_ops
-from src.eliza_trainer.losses import AssistantOnlyDataCollator
+from src.eliza_trainer.losses import DataCollatorWithLossMode
+from src.eliza_trainer.losses.weighted_loss_trainer import WeightedLossTrainer
 
 from ..run_config import SFTRunConfig
 
@@ -70,8 +71,12 @@ def run_trl_training(
         gradient_checkpointing=run_config.training.gradient_checkpointing,
     )
 
-    data_collator = AssistantOnlyDataCollator(tokenizer=tokenizer)
-    trainer = Trainer(
+    data_collator = DataCollatorWithLossMode(tokenizer=tokenizer)
+    
+    # Use custom trainer for weighted mode, standard Trainer otherwise
+    trainer_cls = WeightedLossTrainer if run_config.model.loss_mode == "weighted" else Trainer
+    
+    trainer = trainer_cls(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -96,8 +101,14 @@ def run_trl_training(
         allow_existing_tags=run_config.hub.allow_existing_tags,
     )
 
+    # Log loss mode configuration
     mlflow.log_param("backend", "trl")
-    mlflow.log_param("assistant_only_loss", True)
+    mlflow.log_param("loss_mode", run_config.model.loss_mode)
+    if run_config.model.loss_mode == "weighted":
+        mlflow.log_param("prompt_loss_weight", run_config.model.prompt_loss_weight)
+    # Keep backward-compatible param for dashboards that may depend on it
+    mlflow.log_param("assistant_only_loss", run_config.model.loss_mode == "assistant_only")
+    
     mlflow.log_param("load_in_4bit", run_config.model.load_in_4bit)
     mlflow.log_param("gradient_checkpointing", run_config.training.gradient_checkpointing)
     if run_config.model.load_in_4bit:

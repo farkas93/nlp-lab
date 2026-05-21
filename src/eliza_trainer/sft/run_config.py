@@ -14,6 +14,7 @@ BACKENDS = {"trl", "unsloth"}
 CACHE_MODES = {"reuse", "refresh"}
 TAG_STRATEGIES = {"run_name", "none", "custom"}
 SOURCE_LINEAGE_STRATEGIES = {"auto", "adapter", "full"}
+LOSS_MODES = {"assistant_only", "full_conversation", "weighted"}
 
 
 @dataclass
@@ -44,6 +45,8 @@ class SFTModelConfig:
     max_seq_len: int = 2048
     use_bf16: bool = True
     load_in_4bit: bool = False
+    loss_mode: str = "full_conversation"  # "assistant_only" | "full_conversation" | "weighted"
+    prompt_loss_weight: float = 0.0  # Only used when loss_mode="weighted". Range: 0.0-1.0
     lora_r: int = 16
     lora_alpha: int = 16
     lora_dropout: float = 0.05
@@ -179,6 +182,23 @@ def _normalize_cache_mode(value: str) -> str:
     if cache_mode not in CACHE_MODES:
         raise ValueError(f"Unsupported data.cache_mode={cache_mode}; expected one of {sorted(CACHE_MODES)}")
     return cache_mode
+
+
+def _normalize_loss_mode(value: str) -> str:
+    loss_mode = (value or "full_conversation").strip().lower()
+    if loss_mode not in LOSS_MODES:
+        raise ValueError(f"Unsupported model.loss_mode={loss_mode}; expected one of {sorted(LOSS_MODES)}")
+    return loss_mode
+
+
+def _validate_prompt_loss_weight(weight: float, loss_mode: str) -> float:
+    """Validate prompt_loss_weight and return normalized value."""
+    if loss_mode == "weighted":
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError(
+                f"model.prompt_loss_weight must be between 0.0 and 1.0, got {weight}"
+            )
+    return weight
 
 
 def _slugify(value: str) -> str:
@@ -321,12 +341,18 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         cache_mode=_normalize_cache_mode(str(data_raw.get("cache_mode", "reuse"))),
     )
 
+    loss_mode = _normalize_loss_mode(str(model_raw.get("loss_mode", "full_conversation")))
+    prompt_loss_weight = float(model_raw.get("prompt_loss_weight", 0.0))
+    _validate_prompt_loss_weight(prompt_loss_weight, loss_mode)
+
     model = SFTModelConfig(
         owner=model_owner,
         name=model_name,
         max_seq_len=int(model_raw.get("max_seq_len", 2048)),
         use_bf16=bool(model_raw.get("use_bf16", True)),
         load_in_4bit=bool(model_raw.get("load_in_4bit", False)),
+        loss_mode=loss_mode,
+        prompt_loss_weight=prompt_loss_weight,
         lora_r=int(model_raw.get("lora_r", 16)),
         lora_alpha=int(model_raw.get("lora_alpha", 16)),
         lora_dropout=float(model_raw.get("lora_dropout", 0.05)),
@@ -460,6 +486,7 @@ __all__ = [
     "CACHE_MODES",
     "TAG_STRATEGIES",
     "SOURCE_LINEAGE_STRATEGIES",
+    "LOSS_MODES",
     "SFTIdentityConfig",
     "SFTDataConfig",
     "SFTModelConfig",
