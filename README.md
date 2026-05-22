@@ -141,3 +141,50 @@ Each dataset row should include at least:
 Tokenization applies model chat templates at runtime, and training uses assistant-only loss masking.
 
 Full contract details: `docs/data-contracts/sft.md`.
+
+## Diagnostic Tools
+
+### Diagnose SFT Pipeline
+
+Analyze tokenizer configuration and training data for issues that can cause inference problems (e.g., infinite loops after EOS tokens):
+
+```bash
+# Basic analysis
+./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml
+
+# Analyze more samples with verbose output
+./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml --num-samples 10 --verbose
+
+# Include GGUF metadata analysis
+./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml --gguf-path ~/models/model.gguf
+```
+
+The diagnostic script checks:
+- Tokenizer special token configuration (EOS, PAD, BOS)
+- Detects `pad_token == eos_token` bug with `full_conversation` loss mode
+- Analyzes training samples for proper EOS token placement
+- Optional GGUF metadata extraction and comparison
+
+### Test Model Inference
+
+Test trained models (LoRA adapters or GGUF via Ollama) for EOS stopping behavior and infinite loop detection:
+
+```bash
+# Test LoRA adapter (inferred from config)
+./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml
+
+# Test specific adapter repo
+./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml --adapter-repo zskalo/qwen3.5-0.8b-lora-hass-tools
+
+# Test GGUF via Ollama
+./test_model_inference.py --ollama-model qwen3_hass
+
+# Custom prompts
+./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml --prompt "Turn on the lights"
+```
+
+The inference test script:
+- Runs multiple test prompts through the model
+- Detects if model stops at EOS or continues generating
+- Identifies repetitive patterns indicating infinite loops
+- Works with both transformers/peft (GPU) and Ollama (CPU/GPU)
