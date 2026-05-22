@@ -27,7 +27,9 @@ Notes:
 - Automatically generates and uploads Ollama-compatible Modelfile with proper chat template and stop tokens.
 - Uploads training provenance metadata (`nlp_lab_provenance.json`).
 - Uploads the provided train config as `training_config.yaml`.
-- Tokenizer is loaded from adapter repo first (preserving training config), falls back to base model if needed.
+- Tokenizer is loaded from BASE MODEL (not adapter) for llama.cpp GGUF conversion compatibility.
+  - If you add new tokens during training, you'll need to modify the script to load from adapter.
+  - The Modelfile contains the proper chat template, which Ollama uses at inference time.
 EOF
 }
 
@@ -294,16 +296,23 @@ model = PeftModel.from_pretrained(model, adapter_repo, token=os.getenv("HF_HUB_T
 model = model.merge_and_unload()
 model.save_pretrained(merged_dir, safe_serialization=True, max_shard_size="4GB")
 
-# Try to load tokenizer from adapter first (preserves training-time config)
-# Fall back to base model if adapter doesn't have tokenizer
-try:
-    tokenizer = AutoTokenizer.from_pretrained(adapter_repo, token=os.getenv("HF_HUB_TOKEN"))
-    print(f"Loaded tokenizer from adapter: {adapter_repo}")
-except Exception as e:
-    print(f"Warning: Could not load tokenizer from adapter ({e}), using base model tokenizer")
-    tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
-    print(f"Loaded tokenizer from base model: {base_model}")
-
+# IMPORTANT: Load tokenizer from base model (not adapter) for GGUF conversion compatibility
+#
+# Why base model?
+# - llama.cpp's convert_hf_to_gguf.py recognizes standard tokenizer formats from base models
+# - Loading from adapter can include custom chat_template.jinja that breaks GGUF conversion
+#   with "BPE pre-tokenizer was not recognized" error
+# - The Modelfile (generated later) contains the proper chat template anyway, which is what
+#   Ollama actually uses at inference time
+#
+# When to change this:
+# - If you make tokenizer vocabulary changes during training (new tokens, etc.)
+# - If llama.cpp improves support for custom tokenizer formats
+# - Then try loading from adapter_repo first with fallback to base_model
+#
+# Current behavior: Always use base model tokenizer for GGUF conversion stability
+tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
+print(f"Loaded tokenizer from base model: {base_model}")
 tokenizer.save_pretrained(merged_dir)
 PY
 
