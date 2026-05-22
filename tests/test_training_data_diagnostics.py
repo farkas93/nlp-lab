@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.eliza_trainer.sft.run_config import load_sft_run_config
 from src.eliza_trainer.sft.dataset_loader import load_sft_manifest_dataset
+from src.sft_dataset_loader import detect_tokenizer_type, get_normalizer
 
 
 @dataclass
@@ -82,6 +83,11 @@ def analyze_training_samples(config_path: str, num_samples: int = 5) -> Training
     
     eos_token_id = tokenizer.eos_token_id
     
+    # Get appropriate normalizer for this tokenizer
+    tokenizer_type = getattr(run_config.model, 'tokenizer_type', None)
+    detected_type = detect_tokenizer_type(tokenizer, tokenizer_type)
+    normalizer = get_normalizer(detected_type)
+    
     # Load dataset
     dataset_result = load_sft_manifest_dataset(
         manifest_uri=run_config.data.manifest_uri,
@@ -98,24 +104,50 @@ def analyze_training_samples(config_path: str, num_samples: int = 5) -> Training
     sample_analyses: list[SampleAnalysis] = []
     all_issues: list[str] = []
     
+    def _normalize_tool_calls(tool_calls: Any) -> list[dict[str, Any]] | None:
+        """Apply the same normalization as training pipeline."""
+        if not isinstance(tool_calls, list):
+            return None
+        
+        # Filter to only dict items
+        normalized = [tc for tc in tool_calls if isinstance(tc, dict)]
+        if not normalized:
+            return None
+        
+        # Apply tokenizer-specific normalization (parses JSON strings, etc)
+        return normalizer.normalize_tool_calls(normalized)
+    
+    def _normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a message the same way the training pipeline does."""
+        normalized = {
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+        }
+        
+        # Normalize tool_calls if present
+        raw_tool_calls = msg.get("tool_calls")
+        if raw_tool_calls:
+            normalized_tool_calls = _normalize_tool_calls(raw_tool_calls)
+            if normalized_tool_calls:
+                normalized["tool_calls"] = normalized_tool_calls
+        
+        # Preserve name field
+        if msg.get("name"):
+            normalized["name"] = msg["name"]
+        
+        return normalized
+    
     for i in range(samples_to_analyze):
         sample = train_dataset[i]
         messages = sample.get("messages", [])
         session_id = sample.get("session_id")
         
-        # Build full messages for chat template
+        # Build full messages for chat template with proper normalization
         full_messages = []
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
-            normalized = {
-                "role": msg.get("role"),
-                "content": msg.get("content"),
-            }
-            if msg.get("tool_calls"):
-                normalized["tool_calls"] = msg["tool_calls"]
-            if msg.get("name"):
-                normalized["name"] = msg["name"]
+            normalized = _normalize_message(msg)
             full_messages.append(normalized)
         
         # Apply chat template
