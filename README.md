@@ -144,47 +144,40 @@ Full contract details: `docs/data-contracts/sft.md`.
 
 ## Diagnostic Tools
 
-### Diagnose SFT Pipeline
-
-Analyze tokenizer configuration and training data for issues that can cause inference problems (e.g., infinite loops after EOS tokens):
+Run model diagnostics to identify training pipeline issues (e.g., infinite loops after EOS tokens):
 
 ```bash
-# Basic analysis
-./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml
+./run_model_diagnostics.sh --help
+```
 
-# Analyze more samples with verbose output
-./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml --num-samples 10 --verbose
+### Examples
 
-# Include GGUF metadata analysis
-./diagnose_sft_pipeline.py --config configs/sft_hass_qwen3_5_0_8b.yaml --gguf-path ~/models/model.gguf
+```bash
+# Analyze tokenizer configuration (detects pad_token == eos_token bug)
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --tokenizer
+
+# Analyze training data samples for EOS placement
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --training-data --num-samples 10
+
+# Full analysis (tokenizer + training data)
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --all
+
+# Analyze GGUF file metadata
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --gguf ~/models/model.gguf
+
+# Test inference via Ollama
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --inference-ollama qwen3_hass
+
+# Test inference with transformers/peft (requires GPU)
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --inference-transformers
+
+# Full pipeline with JSON output
+./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --all --output-json report.json
 ```
 
 The diagnostic script checks:
 - Tokenizer special token configuration (EOS, PAD, BOS)
 - Detects `pad_token == eos_token` bug with `full_conversation` loss mode
 - Analyzes training samples for proper EOS token placement
-- Optional GGUF metadata extraction and comparison
-
-### Test Model Inference
-
-Test trained models (LoRA adapters or GGUF via Ollama) for EOS stopping behavior and infinite loop detection:
-
-```bash
-# Test LoRA adapter (inferred from config)
-./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml
-
-# Test specific adapter repo
-./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml --adapter-repo zskalo/qwen3.5-0.8b-lora-hass-tools
-
-# Test GGUF via Ollama
-./test_model_inference.py --ollama-model qwen3_hass
-
-# Custom prompts
-./test_model_inference.py --config configs/sft_hass_qwen3_5_0_8b.yaml --prompt "Turn on the lights"
-```
-
-The inference test script:
-- Runs multiple test prompts through the model
-- Detects if model stops at EOS or continues generating
-- Identifies repetitive patterns indicating infinite loops
-- Works with both transformers/peft (GPU) and Ollama (CPU/GPU)
+- GGUF metadata extraction and chat template verification
+- Inference testing for EOS stopping behavior and infinite loop detection
