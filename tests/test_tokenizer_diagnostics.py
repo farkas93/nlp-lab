@@ -101,9 +101,11 @@ def analyze_tokenizer_config(config_path: str) -> TokenizerComparisonResult:
     )
     before = _extract_tokenizer_diagnostics(tokenizer)
     
-    # Apply train.py modifications
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    # Apply train.py modifications (FIXED VERSION)
+    # Only set pad_token if not already defined
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = "left"
     
     after = _extract_tokenizer_diagnostics(tokenizer)
