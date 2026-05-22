@@ -243,8 +243,17 @@ def main() -> None:
             use_fast=True,
             cache_dir=run_config.hf_model_cache_dir,
         )
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+        # Only set pad_token if not already defined
+        # Some models (e.g., Qwen) have distinct pad_token and eos_token by design
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+            logging.info(f"Set pad_token to eos_token: {tokenizer.eos_token!r} (ID: {tokenizer.eos_token_id})")
+        else:
+            logging.info(
+                f"Using existing pad_token: {tokenizer.pad_token!r} (ID: {tokenizer.pad_token_id}), "
+                f"eos_token: {tokenizer.eos_token!r} (ID: {tokenizer.eos_token_id})"
+            )
         tokenizer.padding_side = "left"
 
         # Location 4: Test tokenizer chat template with a simple example

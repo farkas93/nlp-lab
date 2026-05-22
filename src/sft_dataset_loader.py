@@ -100,13 +100,21 @@ class QwenNormalizer(ToolCallNormalizer):
         if "function" in tool_call:
             # Convert nested to flat
             func = tool_call["function"]
-            return {
-                "name": func.get("name"),
-                "arguments": func.get("arguments", {}),
-            }
+            arguments = func.get("arguments", {})
+        else:
+            arguments = tool_call.get("arguments", {})
+        
+        # Parse JSON string arguments (from Parquet storage) back to dict
+        # Qwen's chat template expects dict to iterate with .items()
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                arguments = {}
+        
         return {
-            "name": tool_call.get("name"),
-            "arguments": tool_call.get("arguments", {}),
+            "name": tool_call.get("name") if "function" not in tool_call else tool_call["function"].get("name"),
+            "arguments": arguments,
         }
 
 
@@ -131,13 +139,20 @@ class GemmaNormalizer(ToolCallNormalizer):
         # Similar to Qwen - flat structure
         if "function" in tool_call:
             func = tool_call["function"]
-            return {
-                "name": func.get("name"),
-                "arguments": func.get("arguments", {}),
-            }
+            arguments = func.get("arguments", {})
+        else:
+            arguments = tool_call.get("arguments", {})
+        
+        # Parse JSON string arguments (from Parquet storage) back to dict
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                arguments = {}
+        
         return {
-            "name": tool_call.get("name"),
-            "arguments": tool_call.get("arguments", {}),
+            "name": tool_call.get("name") if "function" not in tool_call else tool_call["function"].get("name"),
+            "arguments": arguments,
         }
 
 

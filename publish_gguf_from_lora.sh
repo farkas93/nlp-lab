@@ -21,10 +21,13 @@ Notes:
 - Auto-loads `.env` from current directory when present.
 - `--train-config` is required and is used to infer adapter repo when `--adapter-repo` is not provided.
 - GGUF repo defaults to adapter repo with `lora` replaced by `gguf` in repo name when `--gguf-repo` is not provided.
+- If `--tag` is not provided, attempts to auto-detect the latest tag from the adapter repo.
 - Default output is F16 GGUF only. Pass --quant to also upload quantized GGUF.
 - Merged safetensors are created in a temporary directory and deleted on exit.
+- Automatically generates and uploads Ollama-compatible Modelfile with proper chat template and stop tokens.
 - Uploads training provenance metadata (`nlp_lab_provenance.json`).
 - Uploads the provided train config as `training_config.yaml`.
+- Tokenizer is loaded from adapter repo first (preserving training config), falls back to base model if needed.
 EOF
 }
 
@@ -167,6 +170,47 @@ fi
 echo "Resolved adapter repo: $ADAPTER_REPO"
 echo "Resolved GGUF repo: $GGUF_REPO"
 
+# Auto-detect TAG from adapter repo if not explicitly provided
+if [[ -z "$TAG" ]]; then
+  echo "No --tag provided, attempting to auto-detect from adapter repo..."
+  TAG=$(ADAPTER_REPO="$ADAPTER_REPO" REQ_FILE="$REQ_FILE" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
+import os
+import sys
+
+try:
+    from huggingface_hub import HfApi
+    
+    adapter_repo = os.environ["ADAPTER_REPO"]
+    api = HfApi(token=os.getenv("HF_HUB_TOKEN"))
+    
+    # List all tags/refs for the adapter repo
+    refs = api.list_repo_refs(repo_id=adapter_repo, repo_type="model")
+    
+    # Get tags (sorted by creation time, most recent first)
+    if hasattr(refs, 'tags') and refs.tags:
+        # Return the most recent tag name
+        latest_tag = refs.tags[0].name if refs.tags else ""
+        print(latest_tag)
+    else:
+        # No tags found
+        print("")
+except Exception as e:
+    print(f"Warning: Could not query adapter tags: {e}", file=sys.stderr)
+    print("")
+PY
+)
+  
+  if [[ -n "$TAG" ]]; then
+    echo "Auto-detected tag from adapter: $TAG"
+  else
+    echo "No tags found on adapter repo, GGUF will not be tagged"
+  fi
+fi
+
+if [[ -n "$TAG" ]]; then
+  echo "Will apply tag to GGUF repo: $TAG"
+fi
+
 if [[ -z "$CONVERT_SCRIPT" ]]; then
   for candidate in \
     "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
@@ -250,7 +294,16 @@ model = PeftModel.from_pretrained(model, adapter_repo, token=os.getenv("HF_HUB_T
 model = model.merge_and_unload()
 model.save_pretrained(merged_dir, safe_serialization=True, max_shard_size="4GB")
 
-tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
+# Try to load tokenizer from adapter first (preserves training-time config)
+# Fall back to base model if adapter doesn't have tokenizer
+try:
+    tokenizer = AutoTokenizer.from_pretrained(adapter_repo, token=os.getenv("HF_HUB_TOKEN"))
+    print(f"Loaded tokenizer from adapter: {adapter_repo}")
+except Exception as e:
+    print(f"Warning: Could not load tokenizer from adapter ({e}), using base model tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained(base_model, token=os.getenv("HF_HUB_TOKEN"))
+    print(f"Loaded tokenizer from base model: {base_model}")
+
 tokenizer.save_pretrained(merged_dir)
 PY
 
@@ -265,6 +318,105 @@ if [[ -n "$QUANT_METHOD" ]]; then
   "$QUANT_BIN" "$F16_GGUF" "$QUANT_GGUF" "$QUANT_METHOD"
   UPLOAD_FILES+=("$QUANT_GGUF")
 fi
+
+echo "Generating Ollama Modelfile"
+MODELFILE_PATH="$OUT_DIR/Modelfile"
+MERGED_DIR="$MERGED_DIR" uv run --python 3.12 --with-requirements "$REQ_FILE" python - > "$MODELFILE_PATH" <<'PY'
+import os
+from transformers import AutoTokenizer
+
+merged_dir = os.environ["MERGED_DIR"]
+
+# Load tokenizer to extract chat template
+try:
+    tokenizer = AutoTokenizer.from_pretrained(merged_dir)
+    chat_template = getattr(tokenizer, 'chat_template', None)
+    eos_token = getattr(tokenizer, 'eos_token', None)
+except Exception:
+    chat_template = None
+    eos_token = None
+
+# Generate Modelfile with Qwen-compatible settings
+print("FROM ./model-f16.gguf")
+print("")
+print("# Model parameters")
+print("PARAMETER temperature 0.7")
+print("PARAMETER top_p 0.8")
+print("PARAMETER top_k 20")
+print("PARAMETER repeat_penalty 1.05")
+print("PARAMETER num_ctx 4096")
+print("")
+print("# Stop tokens for Qwen models")
+print('PARAMETER stop "<|im_end|>"')
+print('PARAMETER stop "<|endoftext|>"')
+print('PARAMETER stop "<|im_start|>"')
+print("")
+
+# If we have a chat template from the tokenizer, use it
+# Otherwise use Qwen's standard template
+if chat_template and len(chat_template.strip()) > 0:
+    # Try to convert Jinja2 template to Ollama template format
+    # This is a simplified conversion - Ollama uses Go templates
+    print('# Chat template extracted from model')
+    print('# Note: This may need manual adjustment for Ollama compatibility')
+    print('# TEMPLATE """')
+    print('# ' + chat_template.replace('\n', '\n# '))
+    print('# """')
+    print('')
+    print('# Using Qwen standard template for Ollama compatibility:')
+
+# Qwen standard template (Ollama-compatible)
+print('TEMPLATE """{{ if .Messages }}')
+print('{{- if or .System .Tools }}<|im_start|>system')
+print('{{ .System }}')
+print('{{- if .Tools }}')
+print('')
+print('# Tools')
+print('')
+print('You are provided with function signatures within <tools></tools> XML tags:')
+print('<tools>{{- range .Tools }}')
+print('{"type": "function", "function": {{ .Function }}}{{- end }}')
+print('</tools>')
+print('')
+print('For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:')
+print('<tool_call>')
+print('{"name": <function-name>, "arguments": <args-json-object>}')
+print('</tool_call>')
+print('{{- end }}<|im_end|>')
+print('{{ end }}')
+print('{{- range $i, $_ := .Messages }}')
+print('{{- $last := eq (len (slice $.Messages $i)) 1 -}}')
+print('{{- if eq .Role "user" }}<|im_start|>user')
+print('{{ .Content }}<|im_end|>')
+print('{{ else if eq .Role "assistant" }}<|im_start|>assistant')
+print('{{ if .Content }}{{ .Content }}')
+print('{{- else if .ToolCalls }}<tool_call>')
+print('{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}')
+print('{{ end }}</tool_call>')
+print('{{- end }}{{ if not $last }}<|im_end|>')
+print('{{ end }}')
+print('{{- else if eq .Role "tool" }}<|im_start|>user')
+print('<tool_response>')
+print('{{ .Content }}')
+print('</tool_response><|im_end|>')
+print('{{ end }}')
+print('{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant')
+print('{{ end }}')
+print('{{- end }}')
+print('{{- else }}')
+print('{{- if .System }}<|im_start|>system')
+print('{{ .System }}<|im_end|>')
+print('{{ end }}{{ if .Prompt }}<|im_start|>user')
+print('{{ .Prompt }}<|im_end|>')
+print('{{ end }}<|im_start|>assistant')
+print('{{ end }}{{ .Response }}{{ if .Response }}<|im_end|>{{ end }}"""')
+print('')
+print('# System message')
+print('SYSTEM """You are Qwen, created by Alibaba Cloud. You are a helpful assistant."""')
+PY
+
+echo "Modelfile generated at: $MODELFILE_PATH"
+UPLOAD_FILES+=("$MODELFILE_PATH")
 
 echo "Uploading GGUF artifacts to $GGUF_REPO"
 GGUF_REPO="$GGUF_REPO" GGUF_PRIVATE="$GGUF_PRIVATE" TAG="$TAG" ADAPTER_REPO="$ADAPTER_REPO" UPLOAD_FILES="${UPLOAD_FILES[*]}" TRAIN_CONFIG_PATH="$TRAIN_CONFIG_PATH" NLP_LAB_GIT_COMMIT="$NLP_LAB_GIT_COMMIT" NLP_LAB_GIT_DESCRIBE="$NLP_LAB_GIT_DESCRIBE" NLP_LAB_GIT_BRANCH="$NLP_LAB_GIT_BRANCH" NLP_LAB_GIT_DIRTY="$NLP_LAB_GIT_DIRTY" NLP_LAB_GIT_REMOTE="$NLP_LAB_GIT_REMOTE" LLAMA_CPP_DIR="$LLAMA_CPP_DIR" QUANT_METHOD="$QUANT_METHOD" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
@@ -345,11 +497,35 @@ tags:
 
 GGUF artifacts generated from LoRA adapter `{adapter_repo}`.
 
-Training provenance:
-- `nlp_lab_provenance.json`
-- `training_config.yaml` ({"included" if train_config_path else "not provided"})
+## Usage with Ollama
 
-Files uploaded:
+A ready-to-use `Modelfile` is included for easy deployment:
+
+```bash
+# Download the GGUF and Modelfile
+huggingface-cli download {repo_id} model-f16.gguf Modelfile --local-dir ./model
+
+# Create Ollama model
+cd model
+ollama create my-model -f Modelfile
+
+# Run
+ollama run my-model
+```
+
+The Modelfile includes:
+- Qwen-compatible chat template with tool calling support
+- Proper stop tokens (`<|im_end|>`, `<|endoftext|>`)
+- Recommended parameters (temperature, top_p, etc.)
+
+## Training provenance
+
+- `nlp_lab_provenance.json` - Training run metadata
+- `training_config.yaml` - {"Included" if train_config_path else "Not provided"}
+- `Modelfile` - Ollama deployment configuration
+
+## Files
+
 {chr(10).join(f'- `{os.path.basename(path)}`' for path in upload_files)}
 """
 

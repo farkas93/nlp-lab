@@ -16,7 +16,7 @@ Required:
 Diagnostic Options (at least one required):
   --tokenizer               Analyze tokenizer configuration (pad/eos tokens)
   --training-data           Analyze training data samples for EOS placement
-  --gguf <path>             Analyze GGUF file metadata
+  --gguf <path|auto>        Analyze GGUF file metadata (use 'auto' to discover from config)
   --inference-transformers  Test inference with transformers/peft (requires GPU)
   --inference-ollama <name> Test inference with Ollama model
 
@@ -45,14 +45,17 @@ Examples:
   # Full analysis (tokenizer + training data)
   ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --all
 
-  # Analyze GGUF file
+  # Analyze GGUF file (explicit path)
   ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --gguf ~/models/model.gguf
+
+  # Auto-discover and analyze GGUF from HuggingFace
+  ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --gguf auto
 
   # Test inference via Ollama
   ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --inference-ollama qwen3_hass
 
   # Full pipeline with JSON output
-  ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --all --gguf ~/models/model.gguf --output-json report.json
+  ./run_model_diagnostics.sh --config configs/sft_hass_qwen3_5_0_8b.yaml --all --gguf auto --output-json report.json
 EOF
 }
 
@@ -88,6 +91,10 @@ while [[ $# -gt 0 ]]; do
     --gguf)
       RUN_GGUF=true
       GGUF_PATH="$2"
+      # Support --gguf auto to trigger auto-discovery
+      if [[ "$GGUF_PATH" == "auto" ]]; then
+        GGUF_PATH="auto"
+      fi
       shift 2
       ;;
     --inference-transformers)
@@ -257,6 +264,99 @@ fi
 
 # Run GGUF analysis
 if [[ "$RUN_GGUF" == "true" ]]; then
+  # Auto-discover GGUF path if requested
+  if [[ "$GGUF_PATH" == "auto" ]]; then
+    echo "Auto-discovering GGUF path from config..."
+    DISCOVERED_GGUF=$(CONFIG_PATH="$CONFIG_PATH" uv run --python 3.12 --with-requirements "$REQ_FILE" python - <<'PY'
+import os
+import sys
+import yaml
+from pathlib import Path
+
+try:
+    from huggingface_hub import HfApi, hf_hub_download
+    
+    config_path = os.environ["CONFIG_PATH"]
+    
+    # Load config
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    # Get adapter repo from config
+    adapter_repo = config.get("adapter_repo")
+    if not adapter_repo:
+        print("ERROR: No adapter_repo in config", file=sys.stderr)
+        sys.exit(1)
+    
+    # Infer GGUF repo (replace 'lora' with 'gguf')
+    if "-lora-" in adapter_repo:
+        gguf_repo = adapter_repo.replace("-lora-", "-gguf-")
+    elif "lora" in adapter_repo:
+        gguf_repo = adapter_repo.replace("lora", "gguf")
+    else:
+        gguf_repo = adapter_repo + "-gguf"
+    
+    print(f"Inferred GGUF repo: {gguf_repo}", file=sys.stderr)
+    
+    # Check if repo exists and list files
+    api = HfApi(token=os.getenv("HF_HUB_TOKEN"))
+    try:
+        files = api.list_repo_files(repo_id=gguf_repo, repo_type="model")
+        
+        # Look for quantized GGUF first, then F16
+        gguf_files = [f for f in files if f.endswith(".gguf")]
+        
+        if not gguf_files:
+            print(f"ERROR: No GGUF files found in {gguf_repo}", file=sys.stderr)
+            sys.exit(1)
+        
+        # Prefer quantized over F16 (smaller, faster download)
+        quant_priority = ["Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q8_0"]
+        selected_file = None
+        
+        for quant in quant_priority:
+            for f in gguf_files:
+                if quant.lower() in f.lower():
+                    selected_file = f
+                    break
+            if selected_file:
+                break
+        
+        # Fall back to first GGUF file found
+        if not selected_file:
+            selected_file = gguf_files[0]
+        
+        print(f"Selected GGUF file: {selected_file}", file=sys.stderr)
+        
+        # Download to temp location
+        local_path = hf_hub_download(
+            repo_id=gguf_repo,
+            filename=selected_file,
+            repo_type="model",
+            token=os.getenv("HF_HUB_TOKEN")
+        )
+        
+        print(local_path)
+        
+    except Exception as e:
+        print(f"ERROR: Could not access GGUF repo {gguf_repo}: {e}", file=sys.stderr)
+        sys.exit(1)
+        
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+    )
+    
+    if [[ $? -ne 0 ]]; then
+      echo "Failed to auto-discover GGUF path. Please specify explicitly with --gguf <path>"
+      exit 1
+    fi
+    
+    GGUF_PATH="$DISCOVERED_GGUF"
+    echo "Auto-discovered GGUF: $GGUF_PATH"
+  fi
+  
   echo "Running GGUF analysis..."
   GGUF_JSON=$(GGUF_PATH="$GGUF_PATH" uv run --python 3.12 --with-requirements "$REQ_FILE" --with gguf python - <<'PY'
 import os

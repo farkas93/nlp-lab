@@ -162,8 +162,11 @@ TOKENIZER = AutoTokenizer.from_pretrained(
         use_fast=True, 
         cache_dir=HF_MODEL_CACHE_DIR
 )
-TOKENIZER.pad_token = TOKENIZER.eos_token
-TOKENIZER.pad_token_id =  TOKENIZER.eos_token_id
+# Only set pad_token if not already defined
+# Some models (e.g., Qwen) have distinct pad_token and eos_token by design
+if TOKENIZER.pad_token is None:
+    TOKENIZER.pad_token = TOKENIZER.eos_token
+    TOKENIZER.pad_token_id = TOKENIZER.eos_token_id
 TOKENIZER.padding_side = 'left'
 
 def apply_chat_template(msg):
