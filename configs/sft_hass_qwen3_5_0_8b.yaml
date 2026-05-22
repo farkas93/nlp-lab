@@ -7,7 +7,7 @@ identity:
 data:
   bucket: sft-datasets
   dataset_id: home_assistant_tool_usage
-  dataset_version: v2026_05_20
+  dataset_version: v2026_05_22
   train_split: train
   eval_split: eval
   max_train_samples:
