@@ -314,6 +314,7 @@ def main() -> None:
             split_name=run_config.data.train_split,
             return_stats=True,
             tokenizer_type=run_config.runtime.tokenizer_type,
+            enable_thinking=run_config.model.enable_thinking,
         )
         eval_dataset, eval_token_stats = tokenize_with_loss_mode(
             dataset_result.eval_dataset,
@@ -324,6 +325,7 @@ def main() -> None:
             split_name=run_config.data.eval_split,
             return_stats=True,
             tokenizer_type=run_config.runtime.tokenizer_type,
+            enable_thinking=run_config.model.enable_thinking,
         )
 
         # Location 3: Enhanced tokenization logging with drop diagnostics

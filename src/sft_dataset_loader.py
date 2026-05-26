@@ -588,6 +588,7 @@ def tokenize_with_loss_mode(
     fail_on_template_error: bool = False,
     return_stats: bool = False,
     tokenizer_type: str | None = None,
+    enable_thinking: bool = True,
 ) -> Dataset | tuple[Dataset, TokenizationStats]:
     """Tokenize dataset with configurable loss masking.
     
@@ -612,6 +613,10 @@ def tokenize_with_loss_mode(
         return_stats: Whether to return tokenization statistics
         tokenizer_type: Explicit tokenizer type override (auto-detected if None).
                        Supported: 'qwen', 'gemma', 'openai', 'generic'
+        enable_thinking: Whether to enable thinking/reasoning in the model output.
+                        Set to False for Qwen3/3.5 models to disable <think> tags
+                        in Home Assistant and other tool-calling scenarios.
+                        When False, the model is trained to skip reasoning.
     
     Returns:
         Tokenized dataset, optionally with tokenization statistics
@@ -640,13 +645,22 @@ def tokenize_with_loss_mode(
     normalizer = get_normalizer(detected_type)
     
     LOGGER.debug(
-        "Tokenization using %s (detected_type=%s, explicit=%s, loss_mode=%s, prompt_weight=%s)",
+        "Tokenization using %s (detected_type=%s, explicit=%s, loss_mode=%s, prompt_weight=%s, enable_thinking=%s)",
         normalizer.name,
         detected_type,
         tokenizer_type,
         loss_mode,
         prompt_loss_weight if loss_mode == "weighted" else "N/A",
+        enable_thinking,
     )
+    
+    # Determine if we should pass enable_thinking to apply_chat_template
+    # Only Qwen3/3.5 tokenizers support this parameter
+    use_enable_thinking = detected_type == 'qwen' and not enable_thinking
+    if use_enable_thinking:
+        LOGGER.info(
+            "enable_thinking=False for Qwen tokenizer: model will be trained without <think> tags"
+        )
 
     def _normalize_tool_calls(value: Any) -> list[Any] | None:
         """Normalize tool calls using the detected normalizer strategy."""
@@ -789,15 +803,23 @@ def tokenize_with_loss_mode(
         full_messages = prompt_messages + [assistant_target_message]
 
         try:
+            # Build template kwargs - Qwen3/3.5 supports enable_thinking parameter
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+            }
+            if use_enable_thinking:
+                # When enable_thinking is False for Qwen, set it in the template
+                template_kwargs["enable_thinking"] = False
+            
             prompt_text = tokenizer.apply_chat_template(
                 prompt_messages,
-                tokenize=False,
                 add_generation_prompt=True,
+                **template_kwargs,
             )
             full_text = tokenizer.apply_chat_template(
                 full_messages,
-                tokenize=False,
                 add_generation_prompt=False,
+                **template_kwargs,
             )
         except Exception as exc:
             payload = _build_template_debug_payload(
@@ -984,6 +1006,7 @@ def tokenize_with_assistant_only_loss(
     fail_on_template_error: bool = False,
     return_stats: bool = False,
     tokenizer_type: str | None = None,
+    enable_thinking: bool = True,
 ) -> Dataset | tuple[Dataset, TokenizationStats]:
     """Backward-compatible wrapper for tokenize_with_loss_mode.
     
@@ -1003,4 +1026,5 @@ def tokenize_with_assistant_only_loss(
         fail_on_template_error=fail_on_template_error,
         return_stats=return_stats,
         tokenizer_type=tokenizer_type,
+        enable_thinking=enable_thinking,
     )

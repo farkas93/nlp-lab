@@ -26,6 +26,10 @@ model:
   # - weighted: Fractional weight on prompts via prompt_loss_weight
   loss_mode: full_conversation
   # prompt_loss_weight: 0.25  # Only used when loss_mode=weighted (0.0-1.0)
+  # enable_thinking: Set to false for Home Assistant to disable <think> tags
+  # The model will be trained to respond directly without reasoning steps
+  # This produces clean tool_call outputs without empty <think></think> blocks
+  enable_thinking: false
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.05

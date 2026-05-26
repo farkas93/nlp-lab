@@ -47,6 +47,7 @@ class SFTModelConfig:
     load_in_4bit: bool = False
     loss_mode: str = "full_conversation"  # "assistant_only" | "full_conversation" | "weighted"
     prompt_loss_weight: float = 0.0  # Only used when loss_mode="weighted". Range: 0.0-1.0
+    enable_thinking: bool = True  # Set False for Qwen3/3.5 to disable <think> tags in training
     lora_r: int = 16
     lora_alpha: int = 16
     lora_dropout: float = 0.05
@@ -344,6 +345,10 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     loss_mode = _normalize_loss_mode(str(model_raw.get("loss_mode", "full_conversation")))
     prompt_loss_weight = float(model_raw.get("prompt_loss_weight", 0.0))
     _validate_prompt_loss_weight(prompt_loss_weight, loss_mode)
+    
+    # enable_thinking: Set to False for Qwen3/3.5 to disable <think> tags in training
+    # This teaches the model to skip reasoning for tool-calling tasks like Home Assistant
+    enable_thinking = bool(model_raw.get("enable_thinking", True))
 
     model = SFTModelConfig(
         owner=model_owner,
@@ -353,6 +358,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         load_in_4bit=bool(model_raw.get("load_in_4bit", False)),
         loss_mode=loss_mode,
         prompt_loss_weight=prompt_loss_weight,
+        enable_thinking=enable_thinking,
         lora_r=int(model_raw.get("lora_r", 16)),
         lora_alpha=int(model_raw.get("lora_alpha", 16)),
         lora_dropout=float(model_raw.get("lora_dropout", 0.05)),
