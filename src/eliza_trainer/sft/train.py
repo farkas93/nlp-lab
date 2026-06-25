@@ -15,6 +15,12 @@ from huggingface_hub import login
 from transformers import AutoTokenizer
 
 from ..common.runtime import configure_logging, ensure_cuda_alloc_conf, load_project_env
+from ..common.system_telemetry import (
+    SystemTelemetrySampler,
+    build_system_telemetry_artifact,
+    collect_system_fingerprint,
+    load_telemetry_config_from_env,
+)
 from ..common.data_policy import (
     confirm_or_abort,
     is_push_blocked_for_p4,
@@ -162,6 +168,24 @@ def _log_diagnostics_artifacts_to_mlflow(run_id: str | None, artifact_paths: lis
         )
 
 
+def _mlflow_log_system_fingerprint(fingerprint: dict[str, object]) -> None:
+    for key, value in sorted(fingerprint.items()):
+        if value is None:
+            continue
+        mlflow.log_param(f"system_{key}", value)
+
+
+def _log_telemetry_metrics_to_mlflow(run_id: str | None, metrics: dict[str, float]) -> None:
+    if not run_id or not metrics:
+        return
+    try:
+        client = mlflow.tracking.MlflowClient()
+        for key, value in sorted(metrics.items()):
+            client.log_metric(run_id, key, float(value))
+    except Exception:
+        logging.warning("Failed to log system telemetry metrics to MLflow", exc_info=True)
+
+
 def _detect_source_repo_lineage(model_repo: str) -> str:
     try:
         files = set(HfApi().list_repo_files(repo_id=model_repo, repo_type="model"))
@@ -201,6 +225,9 @@ def main() -> None:
     run_id: str | None = None
     backend: str | None = None
     run_name: str | None = None
+    telemetry_sampler: SystemTelemetrySampler | None = None
+    telemetry_summary_metrics: dict[str, float] = {}
+    telemetry_fingerprint: dict[str, object] = {}
 
     try:
         project_root = Path(__file__).resolve().parents[3]
@@ -215,6 +242,19 @@ def main() -> None:
         backend = run_config.training.backend
         run_name = run_config.training.run_name
         source_repo_lineage = _detect_source_repo_lineage(run_config.model.model_name)
+
+        telemetry_config = load_telemetry_config_from_env()
+        if telemetry_config.enabled:
+            telemetry_fingerprint = collect_system_fingerprint(
+                log_raw_hostname=telemetry_config.log_raw_hostname,
+            )
+            telemetry_sampler = SystemTelemetrySampler(
+                interval_sec=telemetry_config.interval_sec,
+            )
+            telemetry_sampler.start()
+            mlflow_host_mode = "raw" if telemetry_config.log_raw_hostname else "anonymized"
+            telemetry_fingerprint["host_name_mode"] = mlflow_host_mode
+            telemetry_fingerprint["sampling_interval_sec"] = telemetry_config.interval_sec
 
         logging.info(
             "Resolved run plan model=%s backend=%s experiment=%s run_name=%s output_dir=%s manifest_uri=%s adapter_repo=%s full_repo=%s source_repo_lineage=%s",
@@ -406,6 +446,9 @@ def main() -> None:
             mlflow.log_param("max_seq_len", run_config.model.max_seq_len)
             mlflow.log_param("backend", run_config.training.backend)
             mlflow.log_param("cache_mode", run_config.data.cache_mode)
+            mlflow.log_param("system_telemetry_enabled", bool(telemetry_config.enabled))
+            if telemetry_config.enabled:
+                _mlflow_log_system_fingerprint(telemetry_fingerprint)
             mlflow.log_metric("train_rows_effective", float(len(train_dataset)))
             mlflow.log_metric("eval_rows_effective", float(len(eval_dataset)))
             _log_tokenization_fit_metrics(prefix="train", stats=train_token_stats)
@@ -441,6 +484,18 @@ def main() -> None:
         logging.exception("SFT run crashed")
         raise
     finally:
+        if telemetry_sampler is not None:
+            telemetry_summary_metrics = telemetry_sampler.stop()
+            telemetry_path = diagnostics_dir / "system_telemetry.json"
+            telemetry_path.write_text(
+                build_system_telemetry_artifact(
+                    fingerprint=telemetry_fingerprint,
+                    summary_metrics=telemetry_summary_metrics,
+                ),
+                encoding="utf-8",
+            )
+            diagnostics_paths.append(telemetry_path)
+        _log_telemetry_metrics_to_mlflow(run_id, telemetry_summary_metrics)
         _log_diagnostics_artifacts_to_mlflow(run_id, diagnostics_paths)
 
 

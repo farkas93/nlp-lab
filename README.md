@@ -37,6 +37,14 @@ Important variables:
 - `MLFLOW_TRACKING_URI` (default: `https://mlflow.chezombor.com/`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION` for `s3://` dataset manifests
 
+MLflow system telemetry (enabled by default, opt-out):
+
+- `NLP_LAB_LOG_SYSTEM_TELEMETRY=0` disables host/system telemetry logging
+- `NLP_LAB_LOG_RAW_HOSTNAME=0` stores anonymized host identifier instead of raw hostname
+- `NLP_LAB_SYSTEM_TELEMETRY_INTERVAL_SEC=15` controls sampling interval for load metrics
+
+By default, `nlp-lab` logs system fingerprint and sampled load metrics to MLflow for home-lab observability.
+
 ## SFT config
 
 SFT runs are YAML-driven. Default config:
