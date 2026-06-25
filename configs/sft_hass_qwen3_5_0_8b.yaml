@@ -24,7 +24,7 @@ model:
   # - assistant_only: Traditional SFT, loss only on assistant responses
   # - full_conversation: Loss on all tokens (can reduce overfitting)
   # - weighted: Fractional weight on prompts via prompt_loss_weight
-  loss_mode: full_conversation
+  loss_mode: weighted
   # prompt_loss_weight: 0.25  # Only used when loss_mode=weighted (0.0-1.0)
   # enable_thinking: Set to false for Home Assistant to disable <think> tags
   # The model will be trained to respond directly without reasoning steps
@@ -37,7 +37,7 @@ model:
 
 training:
   output_root: ./outputs
-  num_train_epochs: 5
+  num_train_epochs: 3
   learning_rate: 2.0e-5
   train_batch_size: 1
   eval_batch_size: 1
