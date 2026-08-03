@@ -12,6 +12,7 @@
 - `docs/migration-v1-to-v2.md`
 - `docs/runs/sft.md`
 - `docs/runs/dpo.md`
+- `docs/runs/jupyter-spark-training.md`
 - `docs/experiments/mlflow.md`
 - `docs/runs/benchmarking.md`
 - `docs/troubleshooting.md`
