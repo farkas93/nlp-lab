@@ -12,6 +12,8 @@ Workflow:
 ## Example notebook cell
 
 ```python
+import os
+
 from eliza_trainer.orchestration import (
     build_training_spark_session,
     run_training_via_spark,
@@ -19,7 +21,7 @@ from eliza_trainer.orchestration import (
     stop_stack,
 )
 
-CONTROL_DAEMON_URL = "http://10.42.47.8:8030"
+CONTROL_DAEMON_URL = os.getenv("CONTROL_DAEMON_URL", "http://10.42.47.8:8030")
 SPARK_MASTER_URL = "spark://10.42.47.7:30077"
 NLP_LAB_ROOT = "/home/zskalo/private/nlp-lab"
 

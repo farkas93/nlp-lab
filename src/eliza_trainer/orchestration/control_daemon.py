@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -11,8 +12,17 @@ class ControlDaemonError(RuntimeError):
     pass
 
 
-def _request_json(url: str, method: str = "GET", timeout: int = 30) -> dict[str, Any]:
-    request = urllib.request.Request(url=url, method=method)
+def _request_json(
+    url: str,
+    method: str = "GET",
+    timeout: int = 30,
+    token: str | None = None,
+) -> dict[str, Any]:
+    headers: dict[str, str] = {}
+    control_token = token if token is not None else os.environ.get("CONTROL_DAEMON_TOKEN", "")
+    if control_token:
+        headers["Authorization"] = f"Bearer {control_token}"
+    request = urllib.request.Request(url=url, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -24,30 +34,31 @@ def _request_json(url: str, method: str = "GET", timeout: int = 30) -> dict[str,
         raise ControlDaemonError(f"Control daemon unreachable: {method} {url}: {exc}") from exc
 
 
-def get_status(base_url: str, timeout: int = 30) -> dict[str, Any]:
-    return _request_json(f"{base_url.rstrip('/')}/status", method="GET", timeout=timeout)
+def get_status(base_url: str, timeout: int = 30, token: str | None = None) -> dict[str, Any]:
+    return _request_json(f"{base_url.rstrip('/')}/status", method="GET", timeout=timeout, token=token)
 
 
-def stop_stack(base_url: str, timeout: int = 60) -> dict[str, Any]:
-    return _request_json(f"{base_url.rstrip('/')}/stack/stop", method="POST", timeout=timeout)
+def stop_stack(base_url: str, timeout: int = 180, token: str | None = None) -> dict[str, Any]:
+    return _request_json(f"{base_url.rstrip('/')}/stack/stop", method="POST", timeout=timeout, token=token)
 
 
-def start_stack(base_url: str, timeout: int = 60) -> dict[str, Any]:
-    return _request_json(f"{base_url.rstrip('/')}/stack/start", method="POST", timeout=timeout)
+def start_stack(base_url: str, timeout: int = 1200, token: str | None = None) -> dict[str, Any]:
+    return _request_json(f"{base_url.rstrip('/')}/stack/start", method="POST", timeout=timeout, token=token)
 
 
 def wait_for_stack_state(
     base_url: str,
     expected_substring: str,
-    timeout_sec: int = 180,
+    timeout_sec: int = 1200,
     poll_interval_sec: int = 3,
+    token: str | None = None,
 ) -> dict[str, Any]:
     deadline = time.time() + timeout_sec
     expected = expected_substring.lower()
     last_status: dict[str, Any] = {}
 
     while time.time() < deadline:
-        last_status = get_status(base_url)
+        last_status = get_status(base_url, token=token)
         output = str(last_status.get("output", "")).lower()
         if expected in output:
             return last_status

@@ -37,6 +37,8 @@ Important variables:
 - `HF_HUB_TOKEN` for model download/upload
 - `MLFLOW_TRACKING_URI` (default: `https://mlflow.chezombor.com/`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION` for `s3://` dataset manifests
+- `CONTROL_DAEMON_URL` (default in examples: `http://10.42.47.8:8030`) for pausing/resuming inference around DGX training
+- `CONTROL_DAEMON_TOKEN` when optional control-daemon authentication is enabled
 
 MLflow system telemetry (enabled by default, opt-out):
 
