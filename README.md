@@ -12,6 +12,7 @@
 - `docs/migration-v1-to-v2.md`
 - `docs/runs/sft.md`
 - `docs/runs/dpo.md`
+- `docs/runs/jupyter-slurm-training.md` (current DGX notebook workflow)
 - `docs/runs/jupyter-spark-training.md`
 - `docs/experiments/mlflow.md`
 - `docs/runs/benchmarking.md`
@@ -22,9 +23,17 @@
 - Production SFT path: `src/eliza_trainer/sft/`
 - Production DPO path: `src/eliza_trainer/dpo/`
 - Common runtime helpers: `src/eliza_trainer/common/`
+- Lightweight submission, worker and runtime-profile package: `packages/training-client/`
 - Legacy post-training experiments: `experiments/legacy_post_training/`
 
 ## Environment
+
+`workspace-dev bootstrap` prepares the CPU-only client/workspace test environment.
+`workspace-dev verify` runs client, control, config, policy and telemetry checks.
+Training framework dependencies are selected through the owned backend profiles.
+Dataset/collator unit tests require those framework dependencies and can be run
+explicitly in that environment; diagnostic scripts that contact live services are
+not included in default workspace discovery.
 
 Copy the env template and set values:
 
@@ -37,7 +46,8 @@ Important variables:
 - `HF_HUB_TOKEN` for model download/upload
 - `MLFLOW_TRACKING_URI` (default: `https://mlflow.chezombor.com/`)
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION` for `s3://` dataset manifests
-- `CONTROL_DAEMON_URL` (default in examples: `http://10.42.47.8:8030`) for pausing/resuming inference around DGX training
+- `INFERENCE_CONTROL_URL` and `SLURM_REST_URL` for explicit DGX mode control and Slurm submission
+- `CONTROL_DAEMON_URL` for legacy Spark examples
 - `CONTROL_DAEMON_TOKEN` when optional control-daemon authentication is enabled
 
 MLflow system telemetry (enabled by default, opt-out):

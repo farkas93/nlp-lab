@@ -1,0 +1,3 @@
+# Pinned ARM64 CPython 3.12 / CUDA 13 wheel; verify the GPU under a Slurm allocation.
+-r sft-trl.txt
+torch @ https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl#sha256=6e7f84cb10c7e7d9f862c318f056d64840544ab4f0bcbf8cf7ed6047fe04051f

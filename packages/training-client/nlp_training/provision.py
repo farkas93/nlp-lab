@@ -1,0 +1,57 @@
+"""Training-owned runtime setup. Host installers delegate here after provisioning."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def profile(name):
+    profiles = json.loads((Path(__file__).parent / "profiles/runtime.json").read_text())
+    if name not in profiles:
+        raise ValueError("Unknown training runtime profile: " + name)
+    return profiles[name]
+
+
+def run(args, **kwargs):
+    subprocess.run([str(arg) for arg in args], check=True, **kwargs)
+
+
+def provision(name, root: Path, source: Path, *, check=False):
+    definition = profile(name)
+    training = root / "venv"
+    python = training / "bin/python"
+    env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(root / "python")}
+    uv = Path(sys.executable).parent / "uv"
+    if not check:
+        if not python.exists():
+            run([uv, "venv", "--python", definition["python"], training], env=env)
+        run([uv, "pip", "install", "--python", python, source], env=env)
+        if definition["requirements"]:
+            requirements = Path(__file__).parent / "profiles" / definition["requirements"]
+            run([uv, "pip", "install", "--python", python, "-r", requirements], env=env)
+    if not python.exists():
+        raise RuntimeError("Training interpreter is missing")
+    run([uv, "pip", "check", "--python", python])
+    # Import metadata only, never allocate CUDA while the host is in inference mode.
+    if definition.get("cuda"):
+        statement = ("import torch,importlib.util as u; "
+                     f"assert torch.version.cuda == {definition['cuda']!r}, torch.version.cuda; "
+                     f"assert all(u.find_spec(n) for n in {definition['modules']!r})")
+        run([python, "-c", statement])
+    return {"profile": name, "python": str(python), "definition": definition}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Prepare nlp-lab's isolated training runtime")
+    parser.add_argument("--profile", choices=("trl", "bootstrap"), required=True)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    print(json.dumps(provision(args.profile, args.root, args.source, check=args.check)))
+
+
+if __name__ == "__main__":
+    main()

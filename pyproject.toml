@@ -1,0 +1,26 @@
+[project]
+name = "nlp-lab"
+version = "0.1.0"
+description = "Manifest-driven model training workspace"
+requires-python = ">=3.10"
+dependencies = ["nlp-lab-training"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+nlp-lab-training = { path = "packages/training-client", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8", "psutil>=7", "python-dotenv>=1"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+testpaths = [
+  "packages/training-client/tests",
+  "tests/test_control_daemon.py",
+  "tests/test_sft_run_config.py",
+  "tests/test_dpo_run_config.py",
+  "tests/test_sft_data_policy.py",
+  "tests/test_system_telemetry.py",
+]

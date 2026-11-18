@@ -1,6 +1,9 @@
-# Jupyter Spark Training (DGX Single GPU)
+# Legacy Jupyter Spark Training (DGX Single GPU)
 
-This runbook launches `nlp-lab` training from a Jupyter notebook while using Spark to place the training task on the DGX GPU worker.
+The current DGX workflow uses the lightweight `nlp_training` Slurm client from
+`packages/training-client`; see [the current runbook](jupyter-slurm-training.md).
+This optional legacy launcher requires a separate GPU training master. It must
+not target the CPU-only ETL master.
 
 Workflow:
 
@@ -22,7 +25,7 @@ from eliza_trainer.orchestration import (
 )
 
 CONTROL_DAEMON_URL = os.getenv("CONTROL_DAEMON_URL", "http://10.42.47.8:8030")
-SPARK_MASTER_URL = "spark://10.42.47.7:30077"
+SPARK_MASTER_URL = os.environ["SPARK_TRAINING_MASTER_URL"]
 NLP_LAB_ROOT = "/home/zskalo/private/nlp-lab"
 
 stop_stack(CONTROL_DAEMON_URL)

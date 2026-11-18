@@ -1,1 +1,2 @@
--r requirements.txt
+-r packages/training-client/nlp_training/profiles/sft-trl.txt
+-e ./packages/training-client
