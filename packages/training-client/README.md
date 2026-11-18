@@ -20,18 +20,19 @@ training.watch(run["run_id"])
 ```
 
 The worker is `python -m nlp_training.worker`; the infrastructure probe is
-`python -m nlp_training.smoke`. Base installation is CPU-safe. GPU dependencies
-are installed only by `nlp_training.provision`, using the named profile in
+`python -m nlp_training.smoke`. Base installation is CPU-safe. Jobs carry their
+bootstrap/runtime source and prepare GPU dependencies inside their Slurm
+allocation with `nlp_training.provision`, using the caller-selected profile in
 `nlp_training/profiles/runtime.json`. Root `requirements.sft-trl.txt` and
 `requirements.dpo-trl.txt` consume the same canonical TRL requirements. The ARM64
 CUDA overlay adds its pinned wheel to that common profile; inference repositories
 do not duplicate these dependency versions.
 
-Host installation consumes a pinned Git snapshot of this subproject, records the
-source commit/archive digest and installs it into the separate bootstrap/training
-environments. Jupyter packages the same pinned base distribution and supplies its
-generic MinIO adapter. Host lifecycle and native Slurm configuration are owned by
-`eliza-inference`.
+Jupyter packages the base distribution and supplies its generic MinIO adapter.
+The host only advertises scheduler capabilities and controls GPU handover; it
+does not install or pin this package. Submitted bundle version 2 records the
+runtime source/profile and uses signed downloads or an inline probe payload.
+See `docs/runs/jupyter-slurm-training.md` for job credentials and recovery.
 
 Run tests with `workspace-dev bootstrap` and `workspace-dev verify` in this
 subproject. They require no GPU frameworks. Model fine-tuning dependencies and

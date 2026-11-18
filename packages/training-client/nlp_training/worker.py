@@ -64,7 +64,7 @@ def extract_verified(bundle: bytes, digest: str, destination: Path, run_id: str)
             with archive.extractfile(entry) as handle:
                 contents[entry.name] = handle.read()
     manifest = json.loads(contents.pop("run-manifest.json"))
-    if manifest.get("version") != 1 or manifest.get("run_id") != run_id or manifest.get("kind") not in {"sft", "dpo"}:
+    if manifest.get("version") != 2 or manifest.get("run_id") != run_id or manifest.get("kind") not in {"sft", "dpo"}:
         raise ValueError("Run manifest identity/version mismatch")
     if set(contents) != set(manifest["files"]):
         raise ValueError("Run manifest file membership mismatch")

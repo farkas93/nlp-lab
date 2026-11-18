@@ -12,11 +12,14 @@ import subprocess
 import tarfile
 import time
 import uuid
+import base64
+import importlib.metadata
 from pathlib import Path, PurePosixPath
 from urllib.request import Request, urlopen
 
 from .credentials import credential as _credential
 from .control import HostControl, request_json
+from .provision import profile
 
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY", "BOOT_FAIL", "DEADLINE", "PREEMPTED"}
@@ -41,8 +44,58 @@ def _run_id(value: str) -> str:
     return str(uuid.UUID(value))
 
 
+def runtime_files(runtime_profile, runtime_source=None):
+    root = Path(runtime_source) / "nlp_training" if runtime_source else Path(__file__).parent
+    definitions = json.loads((root / "profiles/runtime.json").read_text())
+    if runtime_profile not in definitions:
+        raise ValueError("Unknown submitted runtime profile")
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix in {".py", ".json", ".txt"}:
+            if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("Runtime package links are not supported")
+            files["runtime-package/nlp_training/" + path.relative_to(root).as_posix()] = path.read_bytes()
+    if runtime_source:
+        files["runtime-package/pyproject.toml"] = (Path(runtime_source) / "pyproject.toml").read_bytes()
+        return files
+    distribution = importlib.metadata.distribution("nlp-lab-training")
+    requires = [item.split(";", 1)[0].strip() for item in distribution.requires or []
+                if ";" not in item or "provisioning" in item.split(";", 1)[1]]
+    metadata = ('[build-system]\nrequires=["setuptools>=68"]\nbuild-backend="setuptools.build_meta"\n'
+                '[project]\nname="nlp-lab-training"\nversion=' + json.dumps(distribution.version)
+                + '\nrequires-python=">=3.10"\ndependencies=' + json.dumps(requires)
+                + '\n[project.optional-dependencies]\nprovisioning=[]\n'
+                + '\n[tool.setuptools.packages.find]\ninclude=["nlp_training*"]\n'
+                + '[tool.setuptools.package-data]\nnlp_training=["profiles/*.txt","profiles/*.json"]\n')
+    files["runtime-package/pyproject.toml"] = metadata.encode()
+    return files
+
+
+def archive_files(files, manifest):
+    manifest["files"] = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())}
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name, data in sorted({**files, "run-manifest.json": _json(manifest)}.items()):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o644
+            archive.addfile(info, io.BytesIO(data))
+    bundle = gzip.compress(raw.getvalue(), mtime=0)
+    if sum(map(len, files.values())) > MAX_BUNDLE_BYTES or len(bundle) > MAX_BUNDLE_BYTES:
+        raise ValueError("Run bundle exceeds size limit")
+    return bundle, manifest
+
+
+def batch_script(args, runtime_env=None):
+    # This bootstrap requires only the host's OS Python; all runtime code is submitted.
+    source = (Path(__file__).parent / "bootstrap.py").read_text()
+    prefix = "#!/bin/bash\nset -euo pipefail\n"
+    if runtime_env:
+        prefix += "set -a\nsource " + shlex.quote(runtime_env) + "\nset +a\n"
+    return prefix + "/usr/bin/python3 - " + shlex.join(args) + " <<'NLP_JOB_BOOTSTRAP'\n" + source + "\nNLP_JOB_BOOTSTRAP\n"
+
+
 def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifest: dict,
-                  include: tuple[str, ...] = ("src",), kind: str = "sft") -> tuple[bytes, dict]:
+                  include: tuple[str, ...] = ("src",), kind: str = "sft", runtime_profile="trl", runtime_source=None) -> tuple[bytes, dict]:
     """Capture current files, including edits, without packaging the whole workspace."""
     import yaml
 
@@ -86,33 +139,24 @@ def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifes
         raise ValueError("Supply the frozen dataset manifest URI and SHA-256")
     git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True)
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True)
+    if any(name.startswith("runtime-package/") for name in files):
+        raise ValueError("runtime-package is reserved for the submitted execution runtime")
+    files.update(runtime_files(runtime_profile, runtime_source))
     manifest = {
-        "version": 1, "run_id": _run_id(run_id), "kind": kind, "config": config,
+        "version": 2, "run_id": _run_id(run_id), "kind": kind, "config": config,
+        "runtime": {"profile": runtime_profile, "package_version": importlib.metadata.version("nlp-lab-training")},
         "git_base": git.stdout.strip(), "git_status": dirty.stdout.splitlines(),
         "dataset_manifest": dataset_manifest,
-        "files": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())},
     }
-    files["run-manifest.json"] = _json(manifest)
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w") as archive:
-        for name, data in sorted(files.items()):
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(data), 0o644
-            archive.addfile(info, io.BytesIO(data))
-    bundle = gzip.compress(raw.getvalue(), mtime=0)
-    if len(bundle) > MAX_BUNDLE_BYTES:
-        raise ValueError("Compressed run bundle exceeds size limit")
-    return bundle, manifest
+    return archive_files(files, manifest)
 
 
 class TrainingClient:
     """Slurm v0.0.45 adapter; it does not execute or supervise a GPU process."""
     def __init__(self, *, storage=None, bucket: str = "", prefix="training/runs",
                  control_url=None, endpoint_url=None, user=None, token=None,
-                 control_token=None, run_root="/var/lib/eliza-training/runs",
-                 runner=None,
-                 bootstrap_python="/opt/eliza-training/bootstrap/bin/python",
-                 runtime_env="/etc/eliza-training/runtime.env", request=None):
+                 control_token=None, run_root=None, runtime_env=None, request=None,
+                 job_environment_provider=None):
         self.storage = storage
         self.bucket = bucket
         self.prefix = _relative(prefix).rstrip("/")
@@ -120,13 +164,21 @@ class TrainingClient:
         self.endpoint = (endpoint_url or os.getenv("SLURM_REST_URL", "")).rstrip("/")
         self.user, self.token, self.control_token = user, token, control_token
         self._runtime_token, self._runtime_user, self._token_expires = None, None, 0
-        self.run_root, self.runner = run_root, runner
-        self.bootstrap_python, self.runtime_env = bootstrap_python, runtime_env
-        for path in (run_root, bootstrap_python, runtime_env, *([runner] if runner else [])):
+        self.run_root, self.runtime_env = run_root, runtime_env
+        self.job_environment_provider = job_environment_provider
+        for path in [path for path in (run_root, runtime_env) if path]:
             if not PurePosixPath(path).is_absolute() or "\n" in path:
                 raise ValueError("DGX execution paths must be absolute")
         self.request = request or self._http
         self.control = HostControl(self.control_url, token=control_token, request=self.request)
+
+    def discover(self):
+        advertised = self.control.slurm()
+        if "v0.0.45" not in advertised["api_versions"]:
+            raise ValueError("Scheduler does not advertise the supported API")
+        self.endpoint = self.endpoint or advertised["rest_url"].rstrip("/")
+        self.run_root = self.run_root or advertised["workspace"]
+        return advertised
 
     @staticmethod
     def _http(url, method, headers, payload):
@@ -168,7 +220,8 @@ class TrainingClient:
         return self.storage.create_bytes(bucket=self.bucket, key=self._key(run_id, name), data=_json(data))
 
     def submit(self, *, repo, config, dataset_manifest, run_id=None, kind="sft", include=("src",),
-               cpus=4, memory_mb=16384, time_minutes=60):
+               cpus=4, memory_mb=16384, time_minutes=60, runtime_profile="trl", job_environment=None,
+               bundle_url_lifetime=86400, runtime_source=None):
         if self.storage is None or not self.bucket:
             raise ValueError("Supply a storage adapter and private artifact bucket for dataset jobs")
         run_id = _run_id(run_id or str(uuid.uuid4()))
@@ -177,22 +230,28 @@ class TrainingClient:
                 raise ValueError("Resource requests must be positive integers")
         if self.environment().get("phase") != "training":
             raise RuntimeError("Switch the DGX to training mode before submission")
+        advertised = self.discover()
+        if not advertised["ready"]:
+            raise RuntimeError("Advertised Slurm is not ready")
+        extra_env = dict(self.job_environment_provider() if self.job_environment_provider else {})
+        extra_env.update(job_environment or {})
+        for name, value in extra_env.items():
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name) or not isinstance(value, str) or "\x00" in value:
+                raise ValueError("Invalid job environment")
         schema = self._slurm("/openapi/v3")
         if "/slurm/v0.0.45/job/submit" not in schema.get("paths", {}):
             raise ValueError("This client requires the Slurm v0.0.45 API; check deployed /openapi/v3")
         bundle, manifest = freeze_bundle(repo, config, run_id=run_id, dataset_manifest=dataset_manifest,
-                                         include=include, kind=kind)
+                                         include=include, kind=kind, runtime_profile=runtime_profile, runtime_source=runtime_source)
         digest = hashlib.sha256(bundle).hexdigest()
         bundle_key = self._key(run_id, "bundle.tar.gz")
         self.storage.create_bytes(bucket=self.bucket, key=bundle_key, data=bundle,
                                   content_type="application/gzip", max_bytes=MAX_BUNDLE_BYTES)
         self._create(run_id, "manifest.json", {**manifest, "bundle_sha256": digest})
         log_root = self.run_root + "/logs"
-        entrypoint = [self.runner] if self.runner else ["-m", "nlp_training.worker"]
-        command = [self.bootstrap_python, *entrypoint, "--bucket", self.bucket, "--key", bundle_key,
-                   "--sha256", digest, "--run-id", run_id, "--run-root", self.run_root]
-        script = ("#!/bin/bash\nset -euo pipefail\nset -a\nsource " + shlex.quote(self.runtime_env)
-                  + "\nset +a\nexec " + shlex.join(command) + "\n")
+        url = self.storage.presign_get(bucket=self.bucket, key=bundle_key, expires_seconds=bundle_url_lifetime)
+        script = batch_script(["--bundle-url", url, "--bucket", self.bucket, "--key", bundle_key,
+                               "--sha256", digest, "--run-id", run_id, "--run-root", self.run_root], self.runtime_env)
         job = {"name": "eliza-" + run_id, "partition": "training", "nodes": "1", "tasks": 1,
                "cpus_per_task": cpus, "tres_per_node": "gres/gpu:1", "requeue": False,
                "memory_per_node": {"set": True, "number": memory_mb, "infinite": False},
@@ -201,11 +260,13 @@ class TrainingClient:
                "standard_output": f"{log_root}/{run_id}-%j.out",
                "standard_error": f"{log_root}/{run_id}-%j.err",
                "environment": ["PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONUNBUFFERED=1"]}
-        intent = {"run_id": run_id, "bundle_sha256": digest, "job": job,
+        intent = {"run_id": run_id, "bundle_sha256": digest, "job": dict(job),
+                  "job_environment_keys": sorted(extra_env),
                   "script_sha256": hashlib.sha256(script.encode()).hexdigest()}
         if self._create(run_id, "submission-intent.json", intent) != "created":
             raise SubmissionUncertain(f"Run {run_id} already has an intent; use recover_submission(), not resubmit")
         try:
+            job["environment"] = job["environment"] + [name + "=" + value for name, value in extra_env.items()]
             result = self._slurm("/slurm/v0.0.45/job/submit", "POST", {"script": script, "job": job})
             job_id = result["job_id"]
             if type(job_id) is not int or job_id < 1:

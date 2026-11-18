@@ -45,7 +45,7 @@ def provision(name, root: Path, source: Path, *, check=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare nlp-lab's isolated training runtime")
-    parser.add_argument("--profile", choices=("trl", "bootstrap"), required=True)
+    parser.add_argument("--profile", required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--check", action="store_true")

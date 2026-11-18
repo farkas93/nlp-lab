@@ -1,38 +1,79 @@
-# Jupyter to standalone DGX training
+# Job-owned runtime on an advertised Slurm scheduler
 
-Ownership:
+`eliza-inference` installs/advertises Slurm and controls inference/Slurm GPU
+handover. `nlp-lab` owns every training decision and the submitted batch job.
+Jupyter packaging/storage integration is supplied by `eliza-spark`.
 
-- `nlp-lab/packages/training-client`: training client, worker, bundle protocol,
-  runtime profiles and GPU probe;
-- `eliza-inference`: host installation, Slurm configuration, environment exclusion
-  and authenticated lifecycle/token endpoints;
-- `eliza-spark`: Jupyter image, generic storage adapter, secrets and notebooks;
-- `eliza-data-pipelines`: frozen dataset selection/export.
-
-Install host components through `eliza-inference`'s `./scripts/setup control`.
-That installer consumes a pinned snapshot of the training subproject and delegates
-runtime preparation to `python -m nlp_training.provision`. It keeps GPU libraries
-separate from control. Jupyter installs only the base package, so no CUDA packages
-are needed in the notebook image.
-
-In Jupyter, the convenience `eliza_training.ElizaTraining` is a thin adapter that
-injects `ElizaStorage` into the canonical `nlp_training.TrainingClient`.
+The host needs no `nlp-lab` package or model-training environment installed.
+The job carries a stdlib bootstrap plus checksum-pinned runtime source/profile
+and prepares its environments under the non-root Slurm job account. No sudo,
+host Git checkout or inference-owned runtime configuration is used by the job.
 
 ```python
 from eliza_training import ElizaTraining
-training = ElizaTraining(bucket="<private-artifact-bucket>")
+training = ElizaTraining(bucket="<private-artifacts>")
 training.environment("training")
-run = training.submit(repo="/home/jovyan/work/nlp-lab", config="configs/private.yaml",
-    dataset_manifest={"uri": "s3://<bucket>/<manifest>", "sha256": "<exact digest>"})
+print(training.discover())
+run = training.submit(
+    repo="/home/jovyan/work/nlp-lab",
+    config="configs/private.yaml",
+    dataset_manifest={"uri": "s3://<bucket>/<frozen-manifest>", "sha256": "<exact digest>"},
+    runtime_profile="trl",
+    # Supply this when editing runtime code/dependencies in the working checkout:
+    runtime_source="/home/jovyan/work/nlp-lab/packages/training-client",
+)
 training.watch(run["run_id"], on_update=print)
 ```
 
-Freeze exact source/config bytes before submission. Private configs require
-`hub.push_to_hub: false` and outputs inside `artifacts/`. The worker validates the
-bundle and frozen dataset manifest before running the existing SFT/DPO module.
-After restarting a notebook, reconnect using the saved run ID. Do not automatically
-retry an ambiguous submission; reconcile it with `recover_submission`.
+The client discovers the REST URL/API versions, partition resources and writable
+job workspace through `GET /slurm`. An explicit endpoint/workspace override is
+also possible. Scheduler credentials come from `POST /slurm/token`.
 
-The scheduler owns placement/status/cancellation. The host controller owns mode
-switches and inference restoration; notebook kernel exit never switches modes or
-kills jobs. Return to inference explicitly after the queue has drained.
+Runtime defaults come from the installed training client, never from the host.
+An explicit `runtime_source` captures the selected working package's code,
+pyproject and dependency profiles (including edits). The submitted manifest's
+file checksums bind those exact bytes. Use a compatible client/worker protocol;
+this self-contained execution format is bundle version 2.
+
+Source/config/runtime bundles are immutable and contain no job credentials. The
+generic storage adapter supplies a signed download URL with a caller-selected
+lifetime (default one day, S3 maximum seven days). Ensure it outlives queue wait
+and bootstrap; an expired URL fails the job rather than switching data silently.
+
+Storage access and other experiment variables are submitted as Slurm job
+environment values, not archived in run manifests or submission intents. The
+Jupyter adapter resolves its mounted MinIO access; explicit `job_environment`
+values can add/override caller-owned settings such as MLflow/HF credentials.
+Outside Jupyter, inject a storage adapter implementing `read_json`, `read_bytes`,
+`create_bytes` and `presign_get`, plus a job environment/provider. A job-owned
+`runtime_env` file is another explicit caller option; it is never provisioned
+or selected by inference.
+
+Private configs require `hub.push_to_hub: false` and outputs inside `artifacts/`.
+The worker validates the source bundle and dataset-manifest digest before invoking
+the selected SFT/DPO module. Runtime preparation counts against allocated job
+resources and time. Each run has isolated runtime directories.
+
+## GPU acceptance probe
+
+From an environment with the base training client and authenticated control access:
+
+```bash
+python -m nlp_training.smoke
+```
+
+The probe sends its runtime inline, prepares it in the allocation, performs
+CUDA forward/backward, saves an artifact and briefly holds the allocation so a
+busy mode switch can be tested. It requires no HASS dataset or MinIO access,
+but runtime package downloads require network access. Its logs/artifact paths
+are printed with the job ID.
+
+## Recovery
+
+Save the run UUID before submission. A lost response can follow acceptance;
+use `recover_submission` instead of submitting again. Kernel/watch timeout never
+cancels jobs. Cancellation and return to inference are explicit. Missing worker
+outcomes are not success; consult durable scheduler completion records.
+
+Model/template fidelity, frozen dataset selection and saved-model evaluation
+remain separate requirements for a useful HASS fine-tuning experiment.

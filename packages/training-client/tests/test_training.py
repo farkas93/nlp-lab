@@ -47,6 +47,9 @@ class Storage:
     def upload_file(self, filename, bucket, key):
         self.objects[key] = Path(filename).read_bytes()
 
+    def presign_get(self, **kwargs):
+        return "https://storage.example.invalid/bundle"
+
 
 @pytest.fixture
 def repo(tmp_path):
@@ -68,6 +71,8 @@ def transport(fail_submit=False):
         calls.append((url, method, payload))
         if url.endswith("/environment"):
             return {"phase": "training"}
+        if url.endswith("/slurm"):
+            return {"ready": True, "api_versions": ["v0.0.45"], "rest_url": "http://slurm", "workspace": "/jobs"}
         if url.endswith("/openapi/v3"):
             return {"paths": {"/slurm/v0.0.45/job/submit": {}}}
         if url.endswith("/job/submit"):
@@ -180,7 +185,7 @@ def test_cancel_refuses_reused_or_wrong_job_identity(repo):
 def test_scoped_token_is_obtained_cached_and_refreshed_without_notebook_output():
     issued = []
     def request(url, method, headers, payload):
-        if url.endswith("/training/token"):
+        if url.endswith("/slurm/token"):
             issued.append(url)
             return {"user_name": "training-account", "token": "delegated-jwt", "expires_at": 1000}
         assert headers["X-SLURM-USER-NAME"] == "training-account"

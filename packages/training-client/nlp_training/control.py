@@ -51,7 +51,10 @@ class HostControl:
         return self.call("/environment" + ("/" + mode if mode else ""), "POST" if mode else "GET", 1200 if mode else 30)
 
     def training_token(self):
-        return self.call("/training/token", "POST", require_token=True)
+        return self.call("/slurm/token", "POST", require_token=True)
+
+    def slurm(self):
+        return self.call("/slurm")
 
 
 def get_status(base_url, timeout=30, token=None):
