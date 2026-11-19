@@ -1,3 +1,5 @@
 # Pinned ARM64 CPython 3.12 / CUDA 13 wheel; verify the GPU under a Slurm allocation.
 -r sft-trl.txt
 torch @ https://download.pytorch.org/whl/cu130/torch-2.9.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl#sha256=6e7f84cb10c7e7d9f862c318f056d64840544ab4f0bcbf8cf7ed6047fe04051f
+# Pin the matching NVIDIA ARM64 wheel explicitly; PyPI also has a generic wheel for 0.8.0.
+nvidia-cusparselt-cu13 @ https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.0-py3-none-manylinux2014_aarch64.whl#sha256=400c6ed1cf6780fc6efedd64ec9f1345871767e6a1a0a552a1ea0578117ea77c

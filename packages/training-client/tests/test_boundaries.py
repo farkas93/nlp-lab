@@ -24,7 +24,10 @@ def test_profile_delegation_uses_the_canonical_runtime_requirements(tmp_path):
     calls = []
     with patch.object(provision, "run", side_effect=lambda args, **kwargs: calls.append([str(arg) for arg in args])):
         report = provision.provision("trl", root, tmp_path / "source")
-    requirements = next(call[-1] for call in calls if "-r" in call)
+    installs = [call for call in calls if call[1:3] == ["pip", "install"]]
+    assert len(installs) == 1
+    assert str(tmp_path / "source") in installs[0]
+    requirements = installs[0][-1]
     assert requirements.endswith("nlp_training/profiles/sft-trl.arm64-cu130.txt")
     assert report["definition"]["minimum_driver_major"] == 580
     assert any("pip" in call and "check" in call for call in calls)
