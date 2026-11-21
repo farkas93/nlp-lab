@@ -3,16 +3,19 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import hashlib
+import io
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import fsspec
 from datasets import Dataset, DownloadMode, load_dataset
-from eliza_trainer.sft.chat_view import normalize_message, template_tools, require_target_prefix
+import pyarrow.parquet as pq
+from src.eliza_trainer.sft.chat_view import normalize_message, template_tools, require_target_prefix
 
 
 # =============================================================================
@@ -384,14 +387,6 @@ def _s3_storage_options() -> dict[str, Any]:
     return options
 
 
-def _read_text_uri(uri: str) -> str:
-    parsed = urlparse(uri)
-    if parsed.scheme in {"s3", "s3a"}:
-        with fsspec.open(uri, "rt", encoding="utf-8", **_s3_storage_options()) as handle:
-            return handle.read()
-    return Path(uri).read_text(encoding="utf-8")
-
-
 def _resolve_split_file_uri(manifest_uri: str, split_key: str) -> str:
     parsed = urlparse(manifest_uri)
     if "://" in split_key:
@@ -407,12 +402,41 @@ def _resolve_split_file_uri(manifest_uri: str, split_key: str) -> str:
 
 
 def _load_manifest(manifest_uri: str) -> tuple[dict[str, Any], str]:
-    raw_text = _read_text_uri(manifest_uri)
-    manifest = json.loads(raw_text)
+    options = _s3_storage_options() if urlparse(manifest_uri).scheme in {"s3", "s3a"} else {}
+    with fsspec.open(manifest_uri, "rb", **options) as handle:
+        payload = handle.read()
+    manifest = json.loads(payload)
     if not isinstance(manifest, dict):
         raise ValueError("Manifest must be a JSON object")
-    digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(payload).hexdigest()
     return manifest, digest
+
+
+def _load_verified_hass_split(manifest_uri, manifest, split_name, storage_options):
+    """Decode the same bounded bytes that passed the pinned split digest."""
+    entries = [item for item in manifest["splits"] if item.get("split") == split_name]
+    if len(entries) != 1 or split_name not in {"train", "eval"}:
+        raise ValueError("Expected one HASS Parquet object per train/eval split")
+    entry = entries[0]
+    prefix = f"dataset_id={manifest['dataset_id']}/dataset_version={manifest['dataset_version']}"
+    if entry.get("key") != f"{prefix}/split={split_name}/part-00000.parquet" or not re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", "")):
+        raise ValueError("Invalid HASS split identity or checksum")
+    parsed = urlparse(manifest_uri)
+    uri = _resolve_split_file_uri(manifest_uri, entry["key"])
+    if not parsed.scheme:  # local mirror of the exported manifest and split directories
+        uri = str(Path(manifest_uri).parent / f"split={split_name}/part-00000.parquet")
+    options = storage_options if parsed.scheme in {"s3", "s3a"} else {}
+    limit = 32 * 1024 * 1024
+    with fsspec.open(uri, "rb", **options) as handle:
+        payload = handle.read(limit + 1)
+    if len(payload) > limit or hashlib.sha256(payload).hexdigest() != entry["sha256"]:
+        raise ValueError(f"HASS {split_name} split byte checksum mismatch or size limit exceeded")
+    table = pq.read_table(io.BytesIO(payload))
+    if not 1 <= table.num_rows <= 49 or table.num_rows != entry.get("rows"):
+        raise ValueError(f"HASS {split_name} split row count mismatch")
+    if any(mode != "assistant_decision" for mode in table["target_mode"].to_pylist()):
+        raise ValueError("HASS split contains a row outside assistant_decision mode")
+    return Dataset(table)
 
 
 def _split_files_from_manifest(manifest: dict[str, Any], split_name: str) -> list[str]:
@@ -451,8 +475,17 @@ def load_sft_manifest_dataset(
     max_train_samples: int | None,
     max_eval_samples: int | None,
     cache_mode: str = "reuse",
+    expected_manifest_sha256: str | None = None,
 ) -> SFTManifestLoadResult:
     manifest, manifest_sha256 = _load_manifest(manifest_uri)
+    if expected_manifest_sha256 is not None and manifest_sha256 != expected_manifest_sha256:
+        raise ValueError("Dataset manifest checksum mismatch")
+    hass = manifest.get("kind") == "hass-experimental-sft-v1"
+    if hass:
+        if expected_manifest_sha256 is None or (train_split, eval_split) != ("train", "eval"):
+            raise ValueError("HASS smoke requires an exact manifest pin and train/eval splits")
+        if max_train_samples is not None or max_eval_samples is not None:
+            raise ValueError("HASS smoke must preflight every frozen decision")
 
     train_files = _split_files_from_manifest(manifest, train_split)
     eval_files = _split_files_from_manifest(manifest, eval_split)
@@ -469,12 +502,12 @@ def load_sft_manifest_dataset(
         download_mode = DownloadMode.FORCE_REDOWNLOAD
 
     storage_options = _s3_storage_options()
-    train_dataset = _load_parquet_split(
+    train_dataset = _load_verified_hass_split(manifest_uri, manifest, train_split, storage_options) if hass else _load_parquet_split(
         split_uris=train_uris,
         storage_options=storage_options,
         download_mode=download_mode,
     )
-    eval_dataset = _load_parquet_split(
+    eval_dataset = _load_verified_hass_split(manifest_uri, manifest, eval_split, storage_options) if hass else _load_parquet_split(
         split_uris=eval_uris,
         storage_options=storage_options,
         download_mode=download_mode,

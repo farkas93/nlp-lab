@@ -48,10 +48,19 @@ def init_model_for_sft(
     tokenizer,
     quantization_config=None,
     use_bf16: bool = True,
+    revision: str | None = None,
+    architecture: str = "causal_lm",
 ):
     torch_dtype = torch.bfloat16 if use_bf16 else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(
+    loader = AutoModelForCausalLM
+    if architecture == "qwen3_5_conditional_generation":
+        from transformers import Qwen3_5ForConditionalGeneration
+        loader = Qwen3_5ForConditionalGeneration
+    elif architecture != "causal_lm":
+        raise ValueError(f"Unsupported SFT architecture: {architecture}")
+    model = loader.from_pretrained(
         model_name,
+        revision=revision,
         torch_dtype=torch_dtype,
         quantization_config=quantization_config,
         device_map={"": 0},
@@ -59,6 +68,8 @@ def init_model_for_sft(
     )
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
+    if architecture == "qwen3_5_conditional_generation":
+        model.config.text_config.use_cache = False
     return model
 
 def save(model, tokenizer, output_dir, repo_name):

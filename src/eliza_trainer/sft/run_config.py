@@ -42,6 +42,10 @@ class SFTDataConfig:
 class SFTModelConfig:
     owner: str
     name: str
+    revision: str | None = None
+    tokenizer_revision: str | None = None
+    architecture: str = "causal_lm"
+    use_lora: bool = False
     max_seq_len: int = 2048
     use_bf16: bool = True
     load_in_4bit: bool = False
@@ -74,6 +78,7 @@ class SFTTrainingConfig:
     output_root: str = "./outputs"
     backend: str = "trl"
     num_train_epochs: int = 1
+    max_steps: int = -1
     learning_rate: float = 2e-5
     train_batch_size: int = 2
     eval_batch_size: int = 2
@@ -314,6 +319,8 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         dataset_id=data_dataset_id,
         dataset_version=data_dataset_version,
     )
+    if data_raw.get("manifest_uri", manifest_uri) != manifest_uri:
+        raise ValueError("data.manifest_uri must match the derived dataset identity")
 
     identity = SFTIdentityConfig(
         experiment_tag=experiment_tag,
@@ -350,9 +357,29 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     # This teaches the model to skip reasoning for tool-calling tasks like Home Assistant
     enable_thinking = bool(model_raw.get("enable_thinking", True))
 
+    revision = model_raw.get("revision")
+    tokenizer_revision = model_raw.get("tokenizer_revision", revision)
+    for field, value in (("revision", revision), ("tokenizer_revision", tokenizer_revision)):
+        if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
+            raise ValueError(f"model.{field} must be a full lowercase commit SHA")
+    architecture = model_raw.get("architecture", "causal_lm")
+    if architecture not in ("causal_lm", "qwen3_5_conditional_generation"):
+        raise ValueError("Unsupported model.architecture")
+    use_lora = model_raw.get("use_lora", backend == "unsloth" or bool(model_raw.get("load_in_4bit", False)))
+    if type(use_lora) is not bool or (not use_lora and (backend == "unsloth" or model_raw.get("load_in_4bit", False))):
+        raise ValueError("model.use_lora must be boolean; 4-bit and Unsloth training require LoRA")
+    if backend != "trl" and (architecture != "causal_lm" or revision is not None or tokenizer_revision is not None):
+        raise ValueError("Pinned or explicit architecture loading is currently supported by the TRL backend only")
+    max_steps = training_raw.get("max_steps", -1)
+    if type(max_steps) is not int or (max_steps != -1 and max_steps < 1):
+        raise ValueError("training.max_steps must be -1 or a positive integer")
     model = SFTModelConfig(
         owner=model_owner,
         name=model_name,
+        revision=revision,
+        tokenizer_revision=tokenizer_revision,
+        architecture=architecture,
+        use_lora=use_lora,
         max_seq_len=int(model_raw.get("max_seq_len", 2048)),
         use_bf16=bool(model_raw.get("use_bf16", True)),
         load_in_4bit=bool(model_raw.get("load_in_4bit", False)),
@@ -385,6 +412,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         output_root=output_root,
         backend=backend,
         num_train_epochs=int(training_raw.get("num_train_epochs", 1)),
+        max_steps=max_steps,
         learning_rate=float(training_raw.get("learning_rate", 2e-5)),
         train_batch_size=int(training_raw.get("train_batch_size", 2)),
         eval_batch_size=int(training_raw.get("eval_batch_size", 2)),

@@ -53,6 +53,7 @@ def run_unsloth_training(
         logging_steps=run_config.training.logging_steps,
         learning_rate=run_config.training.learning_rate,
         num_train_epochs=run_config.training.num_train_epochs,
+        max_steps=run_config.training.max_steps,
         eval_strategy=run_config.training.eval_strategy,
         save_strategy=run_config.training.save_strategy,
         warmup_steps=run_config.training.warmup_steps,

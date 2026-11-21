@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 
 from .credentials import credential as _credential
 from .control import HostControl, request_json
+from .dataset_pin import validate_dataset_pin, validate_acknowledgement
 from .provision import profile
 
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
@@ -95,7 +96,8 @@ def batch_script(args, runtime_env=None):
 
 
 def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifest: dict,
-                  include: tuple[str, ...] = ("src",), kind: str = "sft", runtime_profile="trl", runtime_source=None) -> tuple[bytes, dict]:
+                  include: tuple[str, ...] = ("src",), kind: str = "sft", runtime_profile="trl", runtime_source=None,
+                  restricted_manifest_ack_sha256=None) -> tuple[bytes, dict]:
     """Capture current files, including edits, without packaging the whole workspace."""
     import yaml
 
@@ -135,8 +137,8 @@ def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifes
     output = _relative(parsed.get("training", {}).get("output_root", ""))
     if PurePosixPath(output).parts[0] != "artifacts":
         raise ValueError("training.output_root must be inside artifacts/ for durable upload")
-    if not isinstance(dataset_manifest, dict) or not re.fullmatch(r"[0-9a-f]{64}", dataset_manifest.get("sha256", "")) or not dataset_manifest.get("uri"):
-        raise ValueError("Supply the frozen dataset manifest URI and SHA-256")
+    _, digest = validate_dataset_pin(parsed, dataset_manifest)
+    validate_acknowledgement(restricted_manifest_ack_sha256, digest)
     git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True)
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True)
     if any(name.startswith("runtime-package/") for name in files):
@@ -148,6 +150,8 @@ def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifes
         "git_base": git.stdout.strip(), "git_status": dirty.stdout.splitlines(),
         "dataset_manifest": dataset_manifest,
     }
+    if restricted_manifest_ack_sha256 is not None:
+        manifest["restricted_manifest_ack_sha256"] = restricted_manifest_ack_sha256
     return archive_files(files, manifest)
 
 
@@ -221,7 +225,7 @@ class TrainingClient:
 
     def submit(self, *, repo, config, dataset_manifest, run_id=None, kind="sft", include=("src",),
                cpus=4, memory_mb=16384, time_minutes=60, runtime_profile="trl", job_environment=None,
-               bundle_url_lifetime=86400, runtime_source=None):
+               bundle_url_lifetime=86400, runtime_source=None, restricted_manifest_ack_sha256=None):
         if self.storage is None or not self.bucket:
             raise ValueError("Supply a storage adapter and private artifact bucket for dataset jobs")
         run_id = _run_id(run_id or str(uuid.uuid4()))
@@ -242,7 +246,8 @@ class TrainingClient:
         if "/slurm/v0.0.45/job/submit" not in schema.get("paths", {}):
             raise ValueError("This client requires the Slurm v0.0.45 API; check deployed /openapi/v3")
         bundle, manifest = freeze_bundle(repo, config, run_id=run_id, dataset_manifest=dataset_manifest,
-                                         include=include, kind=kind, runtime_profile=runtime_profile, runtime_source=runtime_source)
+                                         include=include, kind=kind, runtime_profile=runtime_profile, runtime_source=runtime_source,
+                                         restricted_manifest_ack_sha256=restricted_manifest_ack_sha256)
         digest = hashlib.sha256(bundle).hexdigest()
         bundle_key = self._key(run_id, "bundle.tar.gz")
         self.storage.create_bytes(bucket=self.bucket, key=bundle_key, data=bundle,

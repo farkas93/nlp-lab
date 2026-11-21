@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Auto-confirm policy gates that would otherwise require interactive approval",
     )
+    parser.add_argument("--preflight-only", action="store_true", help="Verify and tokenize both splits without loading model weights")
     return parser.parse_args()
 
 
@@ -279,6 +280,7 @@ def main() -> None:
 
         tokenizer = AutoTokenizer.from_pretrained(
             run_config.model.model_name,
+            revision=run_config.model.tokenizer_revision,
             add_eos_token=True,
             use_fast=True,
             cache_dir=run_config.hf_model_cache_dir,
@@ -320,6 +322,7 @@ def main() -> None:
             max_train_samples=run_config.data.max_train_samples,
             max_eval_samples=run_config.data.max_eval_samples,
             cache_mode=run_config.data.cache_mode,
+            expected_manifest_sha256=run_config.data.expected_manifest_sha256,
         )
         _validate_manifest_expectation(
             run_config.data.expected_manifest_sha256,
@@ -367,6 +370,15 @@ def main() -> None:
             tokenizer_type=run_config.runtime.tokenizer_type,
             enable_thinking=run_config.model.enable_thinking,
         )
+
+        if dataset_result.manifest.get("kind") == "hass-experimental-sft-v1":
+            if not run_config.model.revision or not run_config.model.tokenizer_revision:
+                raise ValueError("HASS SFT requires pinned model and tokenizer revisions")
+            if not len(eval_dataset) or any(stats.rows_dropped or stats.rows_truncated for stats in (train_token_stats, eval_token_stats)):
+                raise ValueError("HASS preflight requires every selected row and a nonempty eval split")
+            for split, dataset in (("train", train_dataset), ("eval", eval_dataset)):
+                logging.info("HASS token preflight split=%s rows=%d max_tokens=%d", split, len(dataset),
+                             max(len(ids) for ids in dataset["input_ids"]))
 
         # Location 3: Enhanced tokenization logging with drop diagnostics
         logging.info(
@@ -423,7 +435,10 @@ def main() -> None:
             train_token_stats.rows_truncated,
             eval_token_stats.rows_truncated,
         )
+        if args.preflight_only:
+            return
 
+        Path(run_config.training.output_root).mkdir(parents=True, exist_ok=True)
         mlflow.set_experiment(run_config.training.experiment_name)
         with mlflow.start_run(run_name=run_config.training.run_name) as active_run:
             run_id = active_run.info.run_id

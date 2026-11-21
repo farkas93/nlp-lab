@@ -17,7 +17,8 @@ from nlp_training import TrainingClient as ElizaTraining, SubmissionUncertain, f
 from nlp_training import worker as runner
 
 RUN = "00000000-0000-4000-8000-000000000001"
-DATASET = {"uri": "s3://sft-datasets/pinned/manifest.json", "sha256": hashlib.sha256(b"{}").hexdigest()}
+MANIFEST_KEY = "dataset_id=pilot/dataset_version=pinned/manifest.json"
+DATASET = {"uri": f"s3://sft-datasets/{MANIFEST_KEY}", "sha256": hashlib.sha256(b"{}").hexdigest()}
 
 
 class Storage:
@@ -38,7 +39,7 @@ class Storage:
         return json.loads(self.objects[key])
 
     def get_object(self, *, Bucket, Key):
-        data = b"{}" if Key == "pinned/manifest.json" else self.objects[Key]
+        data = self.objects.get(Key, b"{}") if Key == MANIFEST_KEY else self.objects[Key]
         return {"Body": io.BytesIO(data), "ContentLength": len(data)}
 
     def put_object(self, *, Bucket, Key, Body, **kwargs):
@@ -57,7 +58,9 @@ def repo(tmp_path):
     (root / "src/eliza_trainer/sft").mkdir(parents=True)
     (root / "configs").mkdir()
     (root / "src/model.py").write_text("value = 'original'\n")
-    (root / "configs/private.yaml").write_text("config_schema_version: 2\nhub:\n  push_to_hub: false\ntraining:\n  output_root: artifacts/checkpoints\n")
+    (root / "configs/private.yaml").write_text("config_schema_version: 2\nhub:\n  push_to_hub: false\ntraining:\n  output_root: artifacts/checkpoints\n"
+                                              "data:\n  bucket: sft-datasets\n  dataset_id: pilot\n  dataset_version: pinned\n"
+                                              f"  expected_manifest_sha256: '{DATASET['sha256']}'\n")
     # Use a real Git base so bundle provenance and edited contents are exercised.
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -224,11 +227,38 @@ def test_real_foreground_worker_archives_private_training_outputs(repo, tmp_path
 
 def test_worker_verifies_dataset_manifest_before_launch(repo, tmp_path):
     storage = Storage()
-    bundle, _ = freeze_bundle(repo, "configs/private.yaml", run_id=RUN,
-                              dataset_manifest={**DATASET, "sha256": "0" * 64})
+    storage.objects[MANIFEST_KEY] = b'{"changed": true}'
+    bundle, _ = freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest=DATASET)
     key = f"training/runs/{RUN}/bundle.tar.gz"
     storage.objects[key] = bundle
     args = type("Args", (), {"run_id": RUN, "run_root": str(tmp_path / "runs"), "bucket": "private-runs", "key": key, "sha256": hashlib.sha256(bundle).hexdigest()})()
     assert runner.execute(args, storage) == 1
     result = json.loads(storage.objects[f"training/runs/{RUN}/result.json"])
     assert result["outcome"] == "failed" and "manifest checksum" in result["error"]
+
+
+def test_bundle_rejects_mismatched_pins_and_acknowledgement(repo):
+    with pytest.raises(ValueError, match="pin differs"):
+        freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest={**DATASET, "sha256": "0" * 64})
+    with pytest.raises(ValueError, match="acknowledgement"):
+        freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest=DATASET, restricted_manifest_ack_sha256="0" * 64)
+
+
+@pytest.mark.parametrize("acknowledge", [False, True])
+def test_worker_passes_explicit_hass_acknowledgement_only(repo, tmp_path, acknowledge):
+    evidence = b'{"kind":"hass-experimental-sft-v1"}'
+    digest = hashlib.sha256(evidence).hexdigest()
+    config = repo / "configs/private.yaml"
+    config.write_text(config.read_text().replace(DATASET["sha256"], digest))
+    (repo / "src/eliza_trainer/sft/train.py").write_text("import sys\nassert '--assume-yes' in sys.argv\n")
+    bundle, _ = freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest={**DATASET, "sha256": digest},
+                              restricted_manifest_ack_sha256=digest if acknowledge else None)
+    storage = Storage()
+    key = f"training/runs/{RUN}/bundle.tar.gz"
+    storage.objects.update({key: bundle, MANIFEST_KEY: evidence})
+    args = type("Args", (), {"run_id": RUN, "run_root": str(tmp_path / "runs"), "bucket": "private-runs", "key": key, "sha256": hashlib.sha256(bundle).hexdigest()})()
+    with patch.dict(os.environ, {"ELIZA_TRAINING_PYTHON": sys.executable}):
+        assert runner.execute(args, storage) == (0 if acknowledge else 1)
+    result = json.loads(storage.objects[f"training/runs/{RUN}/result.json"])
+    if not acknowledge:
+        assert "explicit acknowledgement" in result["error"]

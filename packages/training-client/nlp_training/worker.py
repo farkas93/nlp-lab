@@ -15,6 +15,8 @@ import uuid
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
+from .dataset_pin import validate_dataset_pin, validate_acknowledgement
+
 MAX_BYTES = 64 * 1024 * 1024
 
 
@@ -109,14 +111,20 @@ def execute(args, storage):
     try:
         with log_path.open("wb") as log:
             manifest = extract_verified(download(storage, args.bucket, args.key), args.sha256, workspace, run_id)
-            source = manifest["dataset_manifest"]
-            uri = urlsplit(source["uri"])
-            if uri.scheme != "s3" or not uri.netloc or not uri.path.strip("/"):
-                raise ValueError("Frozen dataset manifest must have an s3:// URI")
+            import yaml
+            config = yaml.safe_load((workspace / manifest["config"]).read_bytes())
+            source, digest = validate_dataset_pin(config, manifest["dataset_manifest"])
+            ack = manifest.get("restricted_manifest_ack_sha256")
+            validate_acknowledgement(ack, digest)
+            if config.get("hub", {}).get("push_to_hub") is not False:
+                raise ValueError("Private worker requires hub.push_to_hub: false")
+            uri = urlsplit(source)
             evidence = download(storage, uri.netloc, uri.path.lstrip("/"))
-            if hashlib.sha256(evidence).hexdigest() != source["sha256"]:
+            if hashlib.sha256(evidence).hexdigest() != digest:
                 raise ValueError("Frozen dataset manifest checksum mismatch")
             (run_dir / "dataset-manifest.json").write_bytes(evidence)
+            if json.loads(evidence).get("kind") == "hass-experimental-sft-v1" and ack is None:
+                raise ValueError("Private HASS SFT requires explicit acknowledgement of its manifest SHA-256")
             if interrupted:
                 raise InterruptedError("Cancelled before training startup")
             training_python = os.environ["ELIZA_TRAINING_PYTHON"]
@@ -132,6 +140,8 @@ def execute(args, storage):
                                runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
             (run_dir / "environment.json").write_text(json.dumps(environment, indent=2))
             command = [training_python, "-m", f"src.eliza_trainer.{manifest['kind']}.train", "--config", manifest["config"]]
+            if ack is not None:
+                command.append("--assume-yes")
             child = subprocess.Popen(command, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             last_upload = time.monotonic()
             while True:

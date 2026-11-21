@@ -1,0 +1,43 @@
+config_schema_version: 2
+identity:
+  experiment_tag: hass_private_smoke
+  backend: trl
+data:
+  bucket: sft-datasets
+  dataset_id: hass_pilot_experimental
+  dataset_version: REPLACE_WITH_FROZEN_DATASET_VERSION
+  expected_manifest_sha256: REPLACE_WITH_MANIFEST_BYTE_SHA256
+  train_split: train
+  eval_split: eval
+model:
+  owner: Qwen
+  name: Qwen3.5-0.8B
+  revision: 2fc06364715b967f1860aea9cf38778875588b17
+  # The tokenizer inherits the model revision unless overridden.
+  architecture: qwen3_5_conditional_generation
+  max_seq_len: 4096
+  use_bf16: true
+  load_in_4bit: false
+  use_lora: true
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  loss_mode: assistant_only
+  enable_thinking: false
+training:
+  output_root: artifacts/checkpoints
+  max_steps: 12
+  train_batch_size: 1
+  eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-5
+  warmup_steps: 0
+  logging_steps: 1
+  eval_strategy: epoch
+  save_strategy: 'no'
+  gradient_checkpointing: true
+hub:
+  push_to_hub: false
+  publish_full_model: false
+tracking:
+  mlflow_tracking_uri: sqlite:///artifacts/mlflow.db
+runtime:
+  tokenizer_type: qwen

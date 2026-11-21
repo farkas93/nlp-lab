@@ -5,7 +5,28 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import pytest
+import yaml
+
 from src.eliza_trainer.sft.run_config import load_sft_run_config
+
+
+def test_private_smoke_template_resolves_pinned_bf16_lora(tmp_path):
+    template = Path(__file__).resolve().parents[1] / "configs/sft_hass_private_smoke.template.yaml"
+    config = yaml.safe_load(template.read_text())
+    config["data"].update(dataset_version="experimental-" + "a" * 64, expected_manifest_sha256="b" * 64)
+    path = tmp_path / "private.yaml"
+    path.write_text(yaml.safe_dump(config))
+    resolved = load_sft_run_config(str(path))
+    assert resolved.model.revision == resolved.model.tokenizer_revision == config["model"]["revision"]
+    assert len(resolved.model.revision) == 40
+    assert resolved.model.architecture == "qwen3_5_conditional_generation"
+    assert resolved.model.use_lora and not resolved.model.load_in_4bit
+    assert resolved.training.max_steps == 12 and not resolved.hub.push_to_hub
+    config["training"]["max_steps"] = True
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="max_steps"):
+        load_sft_run_config(str(path))
 
 
 def _write_config(path: Path, content: str) -> None:

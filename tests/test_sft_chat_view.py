@@ -1,5 +1,7 @@
 import copy
+import hashlib
 import json
+import os
 
 import pytest
 
@@ -107,3 +109,45 @@ def test_decision_view_refuses_prompt_loss_and_context_truncation(tokenization, 
     Dataset, tokenize = tokenization
     with pytest.raises(ValueError):
         tokenize(Dataset.from_list([decision_row()]), NativeTokenizer(), max_length, loss_mode, enable_thinking=False)
+
+
+@pytest.mark.skipif(os.getenv("HASS_PINNED_TOKENIZER_TEST") != "1", reason="opt-in checkpoint tokenizer download")
+def test_pinned_qwen_native_call_and_post_tool_speech(tokenization):
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-0.8B", revision="2fc06364715b967f1860aea9cf38778875588b17")
+    Dataset, tokenize = tokenization
+    speech = decision_row()
+    action = copy.deepcopy(speech)
+    action["messages"] = action["messages"][:2]
+    action["target_message"] = speech["messages"][2]
+    rows = tokenize(Dataset.from_list([action, speech]), tokenizer, 4096, "assistant_only", enable_thinking=False)
+    targets = [tokenizer.decode([value for value in row["labels"] if value != -100]) for row in rows]
+    assert "<function=HassTurnOff>" in targets[0] and "Kitchen light" in targets[0]
+    assert targets[1].startswith(speech["target_text"])
+    assert all("<think>" not in target for target in targets)
+
+
+def test_hass_loader_consumes_only_pinned_parquet_bytes(tmp_path, tokenization):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from src.sft_dataset_loader import load_sft_manifest_dataset
+
+    dataset_id, version = "hass_pilot_experimental", "experimental-" + "a" * 64
+    prefix = f"dataset_id={dataset_id}/dataset_version={version}"
+    entries = []
+    for split in ("train", "eval"):
+        path = tmp_path / f"split={split}/part-00000.parquet"
+        path.parent.mkdir()
+        pq.write_table(pa.Table.from_pylist([decision_row()]), path)
+        entries.append({"split": split, "key": f"{prefix}/split={split}/part-00000.parquet",
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "rows": 1})
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"kind": "hass-experimental-sft-v1", "dataset_id": dataset_id,
+                                    "dataset_version": version, "splits": entries}) + "\r\n")
+    args = dict(manifest_uri=str(manifest), train_split="train", eval_split="eval", max_train_samples=None,
+                max_eval_samples=None, expected_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest())
+    result = load_sft_manifest_dataset(**args)
+    assert result.train_dataset[0]["messages"][2]["content"] is None
+    path.write_bytes(path.read_bytes() + b"changed")
+    with pytest.raises(ValueError, match="split byte checksum"):
+        load_sft_manifest_dataset(**args)

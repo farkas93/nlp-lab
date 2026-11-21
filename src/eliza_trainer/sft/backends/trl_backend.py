@@ -38,10 +38,17 @@ def run_trl_training(
         tokenizer=tokenizer,
         quantization_config=quantization_config,
         use_bf16=run_config.model.use_bf16,
+        revision=run_config.model.revision,
+        architecture=run_config.model.architecture,
     )
 
     if run_config.model.load_in_4bit:
         model = prepare_model_for_kbit_training(model)
+    if run_config.model.use_lora:
+        targets = set(run_config.model.lora_target_modules)
+        available = {name.rsplit(".", 1)[-1] for name, _ in model.named_modules()}
+        if not targets or targets - available:
+            raise ValueError(f"Missing LoRA target modules: {sorted(targets - available)}")
         peft_config = LoraConfig(
             r=run_config.model.lora_r,
             lora_alpha=run_config.model.lora_alpha,
@@ -51,7 +58,10 @@ def run_trl_training(
             target_modules=list(run_config.model.lora_target_modules),
         )
         model = get_peft_model(model, peft_config)
-        logging.info("Attached LoRA adapters for 4-bit TRL training")
+        if run_config.model.revision:
+            # PEFT uses this when resolving the base for a later adapter reload.
+            model.peft_config["default"].revision = run_config.model.revision
+        logging.info("Attached LoRA adapters (4-bit=%s)", run_config.model.load_in_4bit)
 
     training_args = TrainingArguments(
         output_dir=run_config.training.output_dir,
@@ -61,6 +71,7 @@ def run_trl_training(
         logging_steps=run_config.training.logging_steps,
         learning_rate=run_config.training.learning_rate,
         num_train_epochs=run_config.training.num_train_epochs,
+        max_steps=run_config.training.max_steps,
         eval_strategy=run_config.training.eval_strategy,
         save_strategy=run_config.training.save_strategy,
         warmup_steps=run_config.training.warmup_steps,
@@ -69,6 +80,7 @@ def run_trl_training(
         bf16=run_config.model.use_bf16,
         seed=run_config.training.seed,
         gradient_checkpointing=run_config.training.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if run_config.training.gradient_checkpointing else None,
     )
 
     data_collator = DataCollatorWithLossMode(tokenizer=tokenizer)
@@ -84,6 +96,9 @@ def run_trl_training(
         data_collator=data_collator,
     )
     trainer.train()
+    if run_config.training.max_steps > 0 and trainer.state.global_step != run_config.training.max_steps:
+        raise RuntimeError("Trainer did not reach the configured optimizer step budget")
+    logging.info("Training finished at optimizer global_step=%d", trainer.state.global_step)
 
     final_dir = f"{run_config.training.output_dir}/final"
     trainer.save_model(output_dir=final_dir)
@@ -111,7 +126,8 @@ def run_trl_training(
     
     mlflow.log_param("load_in_4bit", run_config.model.load_in_4bit)
     mlflow.log_param("gradient_checkpointing", run_config.training.gradient_checkpointing)
-    if run_config.model.load_in_4bit:
+    mlflow.log_param("use_lora", run_config.model.use_lora)
+    if run_config.model.use_lora:
         mlflow.log_param("lora_r", run_config.model.lora_r)
         mlflow.log_param("lora_alpha", run_config.model.lora_alpha)
         mlflow.log_param("lora_dropout", run_config.model.lora_dropout)

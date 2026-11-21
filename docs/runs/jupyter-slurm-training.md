@@ -50,6 +50,11 @@ Outside Jupyter, inject a storage adapter implementing `read_json`, `read_bytes`
 or selected by inference.
 
 Private configs require `hub.push_to_hub: false` and outputs inside `artifacts/`.
+Their `data.bucket`, `data.dataset_id`, `data.dataset_version` and
+`data.expected_manifest_sha256` must resolve to the same manifest URI and stored-byte
+digest as the submission pin. For P3/P4, pass `restricted_manifest_ack_sha256` only
+after explicit operator acknowledgement of that digest. See the
+[private HASS smoke runbook](hass-private-sft-smoke.md) for the pinned example.
 The worker validates the source bundle and dataset-manifest digest before invoking
 the selected SFT/DPO module. Runtime preparation counts against allocated job
 resources and time. Each run has isolated runtime directories.
