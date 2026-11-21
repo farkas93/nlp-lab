@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import fsspec
 from datasets import Dataset, DownloadMode, load_dataset
+from eliza_trainer.sft.chat_view import normalize_message, template_tools, require_target_prefix
 
 
 # =============================================================================
@@ -656,10 +657,10 @@ def tokenize_with_loss_mode(
     
     # Determine if we should pass enable_thinking to apply_chat_template
     # Only Qwen3/3.5 tokenizers support this parameter
-    use_enable_thinking = detected_type == 'qwen' and not enable_thinking
+    use_enable_thinking = detected_type == 'qwen'
     if use_enable_thinking:
         LOGGER.info(
-            "enable_thinking=False for Qwen tokenizer: model will be trained without <think> tags"
+            "Qwen chat-template enable_thinking=%s", enable_thinking
         )
 
     def _normalize_tool_calls(value: Any) -> list[Any] | None:
@@ -677,55 +678,31 @@ def tokenize_with_loss_mode(
         if not basic_normalized:
             return None
         
-        # Apply tokenizer-specific transformation
-        return normalizer.normalize_tool_calls(basic_normalized)
+        # Reject corrupt stored arguments rather than silently replacing them.
+        for call in basic_normalized:
+            arguments = call.get("function", call).get("arguments")
+            if isinstance(arguments, str) and not isinstance(json.loads(arguments), dict):
+                raise ValueError("Tool arguments must decode to an object")
+        normalized = normalizer.normalize_tool_calls(basic_normalized)
+        for source, target in zip(basic_normalized, normalized):
+            for field in ("id", "type"):
+                if source.get(field) is not None:
+                    target[field] = source[field]
+        return normalized
 
     def _normalize_chat_message(item: Any) -> dict[str, Any] | None:
-        if not isinstance(item, dict):
-            return None
-        role = item.get("role")
-        content = item.get("content")
-        
-        # Handle assistant messages with tool_calls embedded in content as JSON string
-        # This handles dataset formats where tool calls are stored as:
-        # {"role": "assistant", "content": '{"tool_calls": [...]}'}
-        # Instead of the expected:
-        # {"role": "assistant", "content": null, "tool_calls": [...]}
-        if role == "assistant" and isinstance(content, str) and content.strip().startswith("{"):
-            try:
-                parsed = json.loads(content)
-                if isinstance(parsed, dict) and "tool_calls" in parsed:
-                    # Extract tool calls from the embedded JSON in content
-                    embedded_tool_calls = parsed.get("tool_calls")
-                    message: dict[str, Any] = {"role": role, "content": None}
-                    tool_calls = _normalize_tool_calls(embedded_tool_calls)
-                    if isinstance(tool_calls, list) and tool_calls:
-                        message["tool_calls"] = tool_calls
-                    return message
-            except (json.JSONDecodeError, TypeError):
-                pass  # Not valid JSON, fall through to normal processing
-        
-        # Standard message processing
-        if not isinstance(role, str) or not isinstance(content, str):
-            return None
-        message: dict[str, Any] = {"role": role, "content": content}
-        tool_calls = _normalize_tool_calls(item.get("tool_calls"))
-        if isinstance(tool_calls, list):
-            message["tool_calls"] = tool_calls
-        tool_name = item.get("tool_name")
-        if isinstance(tool_name, str) and tool_name.strip():
-            message["tool_name"] = tool_name.strip()
-            message["name"] = tool_name.strip()
-        name = item.get("name")
-        if isinstance(name, str) and name.strip():
-            message["name"] = name.strip()
-        return message
+        return normalize_message(item, _normalize_tool_calls)
 
     def _tokenize(example: dict[str, Any]) -> dict[str, Any]:
+        decision_row = example.get("target_mode") == "assistant_decision"
+        if decision_row and not (loss_mode == "assistant_only" or (loss_mode == "weighted" and prompt_loss_weight == 0)):
+            raise ValueError("Assistant-decision rows require current-target-only loss")
         messages = example.get("messages")
         target_text = example.get("target_text")
         target_message = example.get("target_message")
         target_message_normalized = _normalize_chat_message(target_message)
+        if decision_row and (target_message_normalized is None or target_message_normalized["role"] != "assistant"):
+            raise ValueError("Assistant-decision row has no valid native assistant target")
         if not isinstance(messages, list) or (
             not isinstance(target_text, str) and target_message_normalized is None
         ):
@@ -750,6 +727,8 @@ def tokenize_with_loss_mode(
         for item in messages:
             normalized = _normalize_chat_message(item)
             if normalized is None:
+                if decision_row:
+                    raise ValueError("Assistant-decision row contains an invalid visible message")
                 continue
             prompt_messages.append(normalized)
 
@@ -808,8 +787,10 @@ def tokenize_with_loss_mode(
                 "tokenize": False,
             }
             if use_enable_thinking:
-                # When enable_thinking is False for Qwen, set it in the template
-                template_kwargs["enable_thinking"] = False
+                template_kwargs["enable_thinking"] = enable_thinking
+            tools = template_tools(example)
+            if tools is not None:
+                template_kwargs["tools"] = tools
             
             prompt_text = tokenizer.apply_chat_template(
                 prompt_messages,
@@ -831,7 +812,7 @@ def tokenize_with_loss_mode(
                 error=exc,
             )
             LOGGER.warning("Dropping SFT row: %s", json.dumps(payload, ensure_ascii=True))
-            if fail_on_template_error:
+            if fail_on_template_error or decision_row:
                 raise
             return {
                 "__drop__": 1,
@@ -853,6 +834,10 @@ def tokenize_with_loss_mode(
 
         if not isinstance(prompt_ids, list) or not isinstance(full_ids, list):
             raise ValueError("Tokenizer returned non-list input_ids")
+        if decision_row:
+            require_target_prefix(prompt_ids, full_ids)
+            if len(full_ids) > max_seq_len:
+                raise ValueError("Assistant-decision row exceeds max_seq_len; preserve its full visible context")
 
         prompt_len = min(len(prompt_ids), len(full_ids))
         is_truncated = 0
