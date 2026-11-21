@@ -23,5 +23,6 @@ testpaths = [
   "tests/test_dpo_run_config.py",
   "tests/test_sft_data_policy.py",
   "tests/test_sft_chat_view.py",
+  "tests/test_hass_smoke_notebook.py",
   "tests/test_system_telemetry.py",
 ]

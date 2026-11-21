@@ -1,5 +1,10 @@
 # First private HASS SFT smoke
 
+For a single guided operator flow, open
+[`notebooks/hass_private_sft_end_to_end.ipynb`](../../notebooks/hass_private_sft_end_to_end.ipynb).
+Run its sections in order; skip archive/generation if you already have the
+exact candidate key and byte checksum.
+
 Run this from Jupyter with access to the deployed Dagster jobs, private MinIO
 buckets and DGX control token. Use the current `feature/training-boundaries`
 checkout and its editable `packages/training-client` in the notebook kernel:
