@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,57 @@ def test_uv_installer_metadata_is_checked_and_preserved(environment):
     cache.write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="installer metadata checksum mismatch"):
         repair.repair()
+
+
+def set_origin(dist, archive_info):
+    origin = dist.root / repair.DIST_INFO / "direct_url.json"
+    origin.write_text(json.dumps({"url": repair.URL, "archive_info": archive_info}))
+    record = dist.root / repair.DIST_INFO / "RECORD"
+    rows = list(csv.reader(io.StringIO(record.read_text())))
+    next(row for row in rows if row[0] == repair.DIST_INFO + "/direct_url.json")[1:] = ["sha256=" + repair.file_digest(origin), str(origin.stat().st_size)]
+    with record.open("w", newline="") as handle:
+        csv.writer(handle, lineterminator="\n").writerows(rows)
+
+
+def test_empty_uv_archive_info_requires_an_independent_reference_hash(environment, monkeypatch):
+    set_origin(environment, {})
+    archive = b"independently verified reference fixture"
+    monkeypatch.setattr(repair, "ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
+    monkeypatch.setattr(repair, "urlopen", lambda url, timeout: io.BytesIO(archive))
+    result = repair.repair()
+    assert result["status"] == "repaired"
+    assert result["archive_verification"] == "reference-download"
+    assert (environment.root / repair.DIST_INFO / "WHEEL").read_bytes() == repair.NEW_WHEEL
+
+
+@pytest.mark.parametrize("failure", ["checksum", "network"])
+def test_reference_verification_failure_leaves_metadata_untouched(environment, monkeypatch, failure):
+    set_origin(environment, {})
+    if failure == "network":
+        def unavailable(*args, **kwargs):
+            raise OSError("network unavailable")
+        monkeypatch.setattr(repair, "urlopen", unavailable)
+    else:
+        monkeypatch.setattr(repair, "urlopen", lambda *args, **kwargs: io.BytesIO(b"wrong archive"))
+    wheel = environment.root / repair.DIST_INFO / "WHEEL"
+    record = environment.root / repair.DIST_INFO / "RECORD"
+    before = wheel.read_bytes(), record.read_bytes()
+    with pytest.raises(RuntimeError, match="reference archive"):
+        repair.repair()
+    assert before == (wheel.read_bytes(), record.read_bytes())
+
+
+def test_recorded_hash_mismatch_is_not_replaced_by_reference_verification(environment, monkeypatch):
+    set_origin(environment, {"hashes": {"sha256": "0" * 64}})
+    monkeypatch.setattr(repair, "verify_reference_archive", lambda: pytest.fail("A recorded mismatch must not be bypassed"))
+    with pytest.raises(RuntimeError, match="Recorded cuSPARSELt SHA-256"):
+        repair.repair()
+
+
+def test_legacy_recorded_hash_is_accepted_without_downloading_reference(environment, monkeypatch):
+    set_origin(environment, {"hash": "sha256=" + repair.ARCHIVE_SHA256})
+    monkeypatch.setattr(repair, "verify_reference_archive", lambda: pytest.fail("Recorded hash already supplied"))
+    assert repair.repair()["archive_verification"] == "installer-record"
 
 
 @pytest.mark.parametrize("fault", ["host", "version", "origin-hash", "origin-url", "binary", "record", "wheel"])

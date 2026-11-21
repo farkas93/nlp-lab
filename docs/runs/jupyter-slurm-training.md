@@ -98,3 +98,11 @@ records `nlp-training-metadata-repair.json` in the job's training environment;
 dataset workers include that receipt in archived `environment.json`. Full
 dependency/platform checks and CUDA tests remain required after normalization.
 Remove this profile hook when changing to a verified upstream fixed pairing.
+
+UV may write the correct direct URL with an empty `archive_info`. In that case,
+the repair first validates all installed vendor files and ARM64 ELF architecture,
+then independently streams/hashes the pinned NVIDIA reference archive before
+editing metadata. The reference is approximately 211 MiB; verification requires
+network access and retains no downloaded archive on disk. A recorded hash mismatch
+is always rejected. The repair receipt distinguishes installer-recorded hashes
+from independent reference downloads. Neither case skips the full dependency check.

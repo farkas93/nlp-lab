@@ -14,6 +14,7 @@ import platform
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
+from urllib.request import urlopen
 
 NAME = "nvidia-cusparselt-cu13"
 VERSION = "0.8.0"
@@ -59,6 +60,22 @@ def atomic(path, data):
         Path(temporary).unlink(missing_ok=True)
 
 
+def verify_reference_archive():
+    """UV can omit PEP 610 hashes. Verify the pinned reference independently."""
+    digest, size = hashlib.sha256(), 0
+    try:
+        with urlopen(URL, timeout=120) as response:
+            while chunk := response.read(1024 * 1024):
+                size += len(chunk)
+                if size > 256 * 1024 * 1024:
+                    raise RuntimeError("NVIDIA reference archive exceeds size limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise RuntimeError("Could not verify the pinned NVIDIA reference archive") from exc
+    if digest.hexdigest() != ARCHIVE_SHA256:
+        raise RuntimeError("Pinned NVIDIA reference archive SHA-256 mismatch")
+
+
 def repair():
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise RuntimeError("cuSPARSELt metadata repair is restricted to Linux aarch64")
@@ -77,10 +94,19 @@ def repair():
         return location
 
     origin = json.loads(installed(DIST_INFO + "/direct_url.json").read_text())
+    if origin.get("url") != URL:
+        raise RuntimeError("cuSPARSELt artifact URL does not match the pinned ARM64 wheel")
     archive = origin.get("archive_info", {})
-    recorded_hash = archive.get("hashes", {}).get("sha256") or archive.get("hash", "").removeprefix("sha256=")
-    if origin.get("url") != URL or recorded_hash != ARCHIVE_SHA256:
-        raise RuntimeError("cuSPARSELt artifact URL/hash does not match the pinned ARM64 wheel")
+    if not isinstance(archive, dict) or not isinstance(archive.get("hashes") or {}, dict):
+        raise RuntimeError("Invalid cuSPARSELt archive provenance")
+    hashes = archive.get("hashes") or {}
+    recorded_hash = hashes.get("sha256")
+    legacy_hash = archive.get("hash")
+    if recorded_hash is not None and recorded_hash != ARCHIVE_SHA256:
+        raise RuntimeError("Recorded cuSPARSELt SHA-256 does not match the pinned ARM64 wheel")
+    if legacy_hash is not None and legacy_hash != "sha256=" + ARCHIVE_SHA256:
+        raise RuntimeError("Recorded cuSPARSELt archive hash does not match the pinned ARM64 wheel")
+    missing_hash = recorded_hash is None and legacy_hash is None
     wheel_path = installed(DIST_INFO + "/WHEEL")
     wheel = wheel_path.read_bytes()
     if wheel not in (OLD_WHEEL, NEW_WHEEL):
@@ -127,6 +153,11 @@ def repair():
         elf = handle.read(20)
     if len(elf) != 20 or elf[:6] != b"\x7fELF\x02\x01" or int.from_bytes(elf[18:20], "little") != 183:
         raise RuntimeError("cuSPARSELt payload is not a Linux ARM64 ELF binary")
+    if missing_hash:
+        print("UV omitted the archive hash; independently verifying the pinned NVIDIA reference archive.", flush=True)
+        # The reference archive hash and all installed vendor file hashes must
+        # pass before touching metadata. No existing bad hash is waived.
+        verify_reference_archive()
     repaired_row = indexed[DIST_INFO + "/WHEEL"]
     status = "repaired" if wheel == OLD_WHEEL else "already-corrected"
     if wheel != NEW_WHEEL:
@@ -138,6 +169,7 @@ def repair():
     if record_path.read_bytes() != new_record:
         atomic(record_path, new_record)
     receipt = {"package": NAME, "version": VERSION, "artifact_sha256": ARCHIVE_SHA256,
+            "archive_verification": "reference-download" if missing_hash else "installer-record",
             "old_tag": "py3-none-manylinux2014_sbsa", "new_tag": "py3-none-manylinux2014_aarch64",
             "verified_vendor_files": len(OFFICIAL_FILES)}
     receipt_path = Path(sys.prefix) / "nlp-training-metadata-repair.json"
