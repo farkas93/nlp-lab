@@ -122,7 +122,10 @@ def execute(args, storage):
             training_python = os.environ["ELIZA_TRAINING_PYTHON"]
             environment = subprocess.check_output([
                 training_python, "-c",
-                "import json,sys,importlib.metadata as m; print(json.dumps({'python':sys.version,'packages':sorted((d.metadata['Name'],d.version) for d in m.distributions())}))",
+                "import json,sys,pathlib,importlib.metadata as m; "
+                "repair=pathlib.Path(sys.prefix)/'nlp-training-metadata-repair.json'; "
+                "print(json.dumps({'python':sys.version,'packages':sorted((d.metadata['Name'],d.version) for d in m.distributions()),"
+                "'metadata_repair':json.loads(repair.read_text()) if repair.exists() else None}))",
             ], cwd=workspace, text=True)
             environment = json.loads(environment)
             environment.update(training_python=training_python,

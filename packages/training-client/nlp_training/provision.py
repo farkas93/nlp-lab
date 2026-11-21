@@ -36,6 +36,10 @@ def provision(name, root: Path, source: Path, *, check=False):
         run(install, env=env)
     if not python.exists():
         raise RuntimeError("Training interpreter is missing")
+    if not check and definition.get("metadata_repair"):
+        if definition["metadata_repair"] != "cusparselt-cu13-0.8.0-arm64":
+            raise ValueError("Unsupported runtime metadata repair")
+        run([python, "-m", "nlp_training.wheel_metadata"])
     run([uv, "pip", "check", "--python", python])
     # Import metadata only, never allocate CUDA while the host is in inference mode.
     if definition.get("cuda"):

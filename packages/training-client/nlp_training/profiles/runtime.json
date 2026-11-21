@@ -1,4 +1,4 @@
 {
   "bootstrap": {"python": "3.12", "requirements": null, "minimum_driver_major": 0},
-  "trl": {"python": "3.12", "requirements": "sft-trl.arm64-cu130.txt", "minimum_driver_major": 580, "cuda": "13.0", "modules": ["transformers", "trl", "peft", "datasets", "mlflow", "bitsandbytes"]}
+  "trl": {"python": "3.12", "requirements": "sft-trl.arm64-cu130.txt", "minimum_driver_major": 580, "cuda": "13.0", "metadata_repair": "cusparselt-cu13-0.8.0-arm64", "modules": ["transformers", "trl", "peft", "datasets", "mlflow", "bitsandbytes"]}
 }

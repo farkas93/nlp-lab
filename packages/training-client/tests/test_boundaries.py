@@ -31,6 +31,9 @@ def test_profile_delegation_uses_the_canonical_runtime_requirements(tmp_path):
     assert requirements.endswith("nlp_training/profiles/sft-trl.arm64-cu130.txt")
     assert report["definition"]["minimum_driver_major"] == 580
     assert any("pip" in call and "check" in call for call in calls)
+    repair = next(i for i, call in enumerate(calls) if "nlp_training.wheel_metadata" in call)
+    check = next(i for i, call in enumerate(calls) if "pip" in call and "check" in call)
+    assert repair < check
     assert not any("cuda.is_available" in " ".join(call) for call in calls)
 
 

@@ -77,3 +77,24 @@ outcomes are not success; consult durable scheduler completion records.
 
 Model/template fidelity, frozen dataset selection and saved-model evaluation
 remain separate requirements for a useful HASS fine-tuning experiment.
+
+## Pinned NVIDIA ARM64 metadata repair
+
+The selected PyTorch 2.9.1 CUDA 13 build requires cuSPARSELt 0.8.0 exactly.
+NVIDIA's ARM64 wheel filename is correct, but its internal tag is the invalid
+`py3-none-manylinux2014_sbsa` (upstream: astral-sh/uv issue 17711 and
+pytorch/pytorch issue 202632). Resolving an ARM64 filename alone does not catch
+this installed-wheel defect.
+
+The TRL profile runs `nlp_training.wheel_metadata` before the complete `uv pip
+check`. It is restricted to Linux aarch64, version 0.8.0 and the recorded URL/
+SHA-256 of the pinned NVIDIA wheel. Every vendor file is checked against the
+vendor RECORD, and the library must be an ARM64 ELF binary. Only the known WHEEL
+tag and its RECORD row are normalized; binary payloads and dependency versions
+are unchanged. Unknown metadata, a different artifact or changed files fail.
+
+The repair is repeatable and recovers an interrupted WHEEL/RECORD update. It
+records `nlp-training-metadata-repair.json` in the job's training environment;
+dataset workers include that receipt in archived `environment.json`. Full
+dependency/platform checks and CUDA tests remain required after normalization.
+Remove this profile hook when changing to a verified upstream fixed pairing.
