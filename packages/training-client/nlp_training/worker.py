@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from .dataset_pin import validate_dataset_pin, validate_acknowledgement
+from .logtail import compact
 
 MAX_BYTES = 64 * 1024 * 1024
 
@@ -168,6 +169,12 @@ def execute(args, storage):
             last_upload = 0
             pending = b""
             tail = b""
+
+            def publish_tail():
+                body = compact(tail.decode("utf-8", errors="replace"), max_lines=60).encode()
+                storage.put_object(Bucket=args.bucket, Key=prefix + "/live-log.txt", Body=body,
+                                   ContentType="text/plain; charset=utf-8")
+
             with selectors.DefaultSelector() as selector:
                 selector.register(child.stdout, selectors.EVENT_READ)
                 while selector.get_map():
@@ -179,7 +186,7 @@ def execute(args, storage):
                         log.write(chunk)
                         log.flush()
                         os.write(1, chunk)
-                        tail = (tail + chunk)[-32768:]
+                        tail = (tail + chunk)[-262144:]
                         pending = (pending + chunk)[-131072:]
                         while b"\n" in pending:
                             line, pending = pending.split(b"\n", 1)
@@ -191,14 +198,12 @@ def execute(args, storage):
                                     pass
                     if time.monotonic() - last_upload >= 3:
                         try:
-                            storage.put_object(Bucket=args.bucket, Key=prefix + "/live-log.txt", Body=tail,
-                                               ContentType="text/plain; charset=utf-8")
+                            publish_tail()
                         except Exception:
                             pass
                         last_upload = time.monotonic()
             try:
-                storage.put_object(Bucket=args.bucket, Key=prefix + "/live-log.txt", Body=tail,
-                                   ContentType="text/plain; charset=utf-8")
+                publish_tail()
             except Exception:
                 pass
             return_code = child.wait()

@@ -92,12 +92,15 @@ old local SQLite configuration and will not retroactively appear on the server.
 
 ## Streaming and failure
 
-The worker publishes a bounded 32 KiB live log every three seconds, including
-while output is quiet. Notebook polls save and display it with stage and step
-progress in one updating view. Full logs remain in object storage; the live log
-is a tail, not the complete archive. Bootstrap/dependency setup reports a stage
-but may have no trainer log yet. Slurm RUNNING and a nonterminal exit code are
-not success; worker result and archive verification decide completion.
+The worker publishes a bounded live log every three seconds, including
+while output is quiet. Progress bars redraw with carriage returns, so the worker
+keeps only the final frame of each line and drops transient bar rows; the
+notebook shows the last 20 real log lines and refreshes them in place. Stage and
+step counters come from explicit progress events, not from parsing bars. Full
+logs remain in object storage; the live log is a compacted tail, not the complete
+archive. Bootstrap/dependency setup reports a stage but may have no trainer log
+yet. Slurm RUNNING and a nonterminal exit code are not success; worker result and
+archive verification decide completion.
 
 Re-run a monitor to reconnect. A lost submit response requires recovery of the
 original UUID; never delete intent markers and resubmit. Use new labels only
