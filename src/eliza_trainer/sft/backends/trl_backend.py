@@ -7,13 +7,19 @@ from pathlib import Path
 import mlflow
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import BitsAndBytesConfig, Trainer, TrainingArguments
+from transformers import BitsAndBytesConfig, Trainer, TrainerCallback, TrainingArguments
 
 from src import model_ops
 from src.eliza_trainer.losses import DataCollatorWithLossMode
 from src.eliza_trainer.losses.weighted_loss_trainer import WeightedLossTrainer
 
 from ..run_config import SFTRunConfig
+
+
+class _Progress(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.is_world_process_zero and (state.global_step % max(1, state.logging_steps) == 0 or state.global_step == state.max_steps):
+            print("\nELIZA_PROGRESS " + json.dumps(dict(stage="optimizing", step=state.global_step, total=state.max_steps)), flush=True)
 
 
 def _probe_longest_row(model, collator, train_dataset, eval_dataset, run_config):
@@ -29,6 +35,7 @@ def _probe_longest_row(model, collator, train_dataset, eval_dataset, run_config)
     if gpu:
         torch.cuda.reset_peak_memory_stats(device)
     logging.info("Probing longest row before optimization: split=%s tokens=%d", split, length)
+    print('ELIZA_PROGRESS {"stage":"longest_row_probe"}', flush=True)
     try:
         with torch.random.fork_rng(devices=[device] if gpu else []):
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=run_config.model.use_bf16):
@@ -57,7 +64,7 @@ def run_trl_training(
     tokenizer,
     train_dataset,
     eval_dataset,
-) -> None:
+) -> int:
     quantization_config = None
     if run_config.model.load_in_4bit:
         quantization_config = BitsAndBytesConfig(
@@ -133,6 +140,7 @@ def run_trl_training(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
+        callbacks=[_Progress()],
     )
     trainer.train()
     if run_config.training.max_steps > 0 and trainer.state.global_step != run_config.training.max_steps:

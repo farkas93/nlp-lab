@@ -103,8 +103,8 @@ def freeze_bundle(repo: str | Path, config: str, *, run_id: str, dataset_manifes
 
     root = Path(repo).resolve(strict=True)
     config = _relative(config)
-    if kind not in {"sft", "dpo"}:
-        raise ValueError("kind must be sft or dpo")
+    if kind not in {"sft", "dpo", "hass-context", "hass-eval"}:
+        raise ValueError("Unsupported training job kind")
     files = {}
     size = 0
     for name in (*include, config):
@@ -258,13 +258,15 @@ class TrainingClient:
         script = batch_script(["--bundle-url", url, "--bucket", self.bucket, "--key", bundle_key,
                                "--sha256", digest, "--run-id", run_id, "--run-root", self.run_root], self.runtime_env)
         job = {"name": "eliza-" + run_id, "partition": "training", "nodes": "1", "tasks": 1,
-               "cpus_per_task": cpus, "tres_per_node": "gres/gpu:1", "requeue": False,
+               "cpus_per_task": cpus, "requeue": False,
                "memory_per_node": {"set": True, "number": memory_mb, "infinite": False},
                "time_limit": {"set": True, "number": time_minutes, "infinite": False},
                "current_working_directory": self.run_root,
                "standard_output": f"{log_root}/{run_id}-%j.out",
                "standard_error": f"{log_root}/{run_id}-%j.err",
                "environment": ["PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONUNBUFFERED=1"]}
+        if kind != "hass-context":
+            job["tres_per_node"] = "gres/gpu:1"
         intent = {"run_id": run_id, "bundle_sha256": digest, "job": dict(job),
                   "job_environment_keys": sorted(extra_env),
                   "script_sha256": hashlib.sha256(script.encode()).hexdigest()}
@@ -295,7 +297,7 @@ class TrainingClient:
     def status(self, run_id):
         # Worker outcomes are useful even with Slurm stopped; they are not scheduler receipts.
         from botocore.exceptions import ClientError
-        for name in ("scheduler-result.json", "result.json"):
+        for name in ("result.json", "scheduler-result.json"):
             try:
                 return self._read(run_id, name)
             except ClientError as exc:
@@ -314,16 +316,27 @@ class TrainingClient:
                     "exit_code": job.get("exit_code")}
         if snapshot["terminal"]:
             self._create(run_id, "scheduler-result.json", snapshot)
+        else:
+            try:
+                progress = self._read(run_id, "progress.json")
+                if progress.get("run_id") == run_id:
+                    snapshot["progress"] = progress
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "404"}:
+                    raise
+            snapshot.pop("exit_code")
         return snapshot
 
     def watch(self, run_id, *, poll_seconds=5, timeout_seconds=3600, on_update=None):
         if poll_seconds <= 0 or timeout_seconds <= 0:
             raise ValueError("Polling interval and timeout must be positive")
         deadline = time.monotonic() + timeout_seconds
+        previous = None
         while True:
             result = self.status(run_id)
-            if on_update:
+            if on_update and result != previous:
                 on_update(result)
+            previous = result
             if result.get("terminal"):
                 return result
             if time.monotonic() >= deadline:

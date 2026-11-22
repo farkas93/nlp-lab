@@ -470,12 +470,24 @@ def main() -> None:
             _log_tokenization_fit_metrics(prefix="eval", stats=eval_token_stats)
 
             if run_config.training.backend == "trl":
-                run_trl_training(
+                steps = run_trl_training(
                     run_config=run_config,
                     tokenizer=tokenizer,
                     train_dataset=train_dataset,
                     eval_dataset=eval_dataset,
                 )
+                if dataset_result.manifest.get("kind") == "hass-experimental-sft-v1":
+                    output = Path(run_config.training.output_dir)
+                    probe_path = output / "longest-row-probe.json"
+                    summary = {"requested_steps": run_config.training.max_steps, "optimizer_steps": steps,
+                               "dataset_manifest_sha256": dataset_result.manifest_sha256,
+                               "model": run_config.model.model_name, "revision": run_config.model.revision,
+                               "train_rows": len(train_dataset), "eval_rows": len(eval_dataset),
+                               "mlflow_run_id": run_id, "mlflow_experiment_id": active_run.info.experiment_id,
+                               "mlflow_tracking_uri": mlflow.get_tracking_uri(),
+                               "probe": json.loads(probe_path.read_text()) if probe_path.is_file() else None,
+                               "adapter_files": sorted(path.name for path in (output / "final").iterdir() if path.is_file())}
+                    Path("artifacts/training-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
             elif run_config.training.backend == "unsloth":
                 run_unsloth_training(
                     run_config=run_config,
@@ -511,7 +523,8 @@ def main() -> None:
             )
             diagnostics_paths.append(telemetry_path)
         _log_telemetry_metrics_to_mlflow(run_id, telemetry_summary_metrics)
-        _log_diagnostics_artifacts_to_mlflow(run_id, diagnostics_paths)
+        if os.getenv("ELIZA_MLFLOW_METRICS_ONLY") != "1":
+            _log_diagnostics_artifacts_to_mlflow(run_id, diagnostics_paths)
 
 
 if __name__ == "__main__":

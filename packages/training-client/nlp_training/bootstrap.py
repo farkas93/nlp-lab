@@ -55,6 +55,13 @@ def execute(data, digest, run_id, run_root, *, bucket=None, key=None):
     subprocess.run([sys.executable, "-m", "venv", str(bootstrap)], check=True)
     python = str(bootstrap / "bin/python")
     subprocess.run([python, "-m", "pip", "install", str(package) + "[provisioning]"], check=True)
+    if bucket and key and manifest["kind"] != "probe":
+        subprocess.run([python, "-c", (
+            "import json, sys; from nlp_training.worker import client; "
+            "client().put_object(Bucket=sys.argv[1], Key=sys.argv[2], "
+            "Body=json.dumps(dict(run_id=sys.argv[3], stage='preparing_runtime')).encode(), "
+            "ContentType='application/json')"
+        ), bucket, key.removesuffix("/bundle.tar.gz") + "/progress.json", run_id], check=False)
     subprocess.run([python, "-m", "nlp_training.provision", "--profile", manifest["runtime"]["profile"],
                     "--root", str(root), "--source", str(package)], check=True)
     env = {**os.environ, "ELIZA_TRAINING_PYTHON": str(root / "venv/bin/python")}

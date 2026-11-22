@@ -175,6 +175,51 @@ def test_watch_timeout_does_not_cancel():
             training.watch(RUN, timeout_seconds=1)
 
 
+def test_watch_only_reports_changes():
+    training = client(Storage(), lambda *args: {})
+    running = {"states": ["RUNNING"], "terminal": False}
+    complete = {"outcome": "succeeded", "terminal": True}
+    seen = []
+    with patch.object(training, "status", side_effect=[running, running.copy(), complete]), patch("nlp_training.client.time.sleep"):
+        assert training.watch(RUN, on_update=seen.append) == complete
+    assert seen == [running, complete]
+
+
+def test_context_submission_does_not_request_gpu(repo):
+    storage = Storage()
+    request, calls = transport()
+    training = client(storage, request)
+    training.submit(repo=repo, config="configs/private.yaml", run_id=RUN, dataset_manifest=DATASET,
+                    kind="hass-context", runtime_profile="context")
+    job = next(payload["job"] for url, _, payload in calls if url.endswith("/job/submit"))
+    assert "tres_per_node" not in job
+
+
+@pytest.mark.parametrize("kind", ["hass-context", "hass-eval"])
+def test_worker_dispatches_remote_checks_and_archives_report(repo, tmp_path, kind):
+    evidence = b'{"kind":"hass-experimental-sft-v1"}'
+    digest = hashlib.sha256(evidence).hexdigest()
+    config = repo / "configs/private.yaml"
+    config.write_text(config.read_text().replace(DATASET["sha256"], digest))
+    (repo / "src/eliza_trainer/sft/remote_checks.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"assert sys.argv[1:3] == ['--kind', {kind!r}]\n"
+        "Path('artifacts').mkdir()\nPath('artifacts/report.json').write_text('{}')\n"
+    )
+    bundle, _ = freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest={**DATASET, "sha256": digest},
+                              kind=kind, restricted_manifest_ack_sha256=digest)
+    storage = Storage()
+    prefix = f"training/runs/{RUN}"
+    key = prefix + "/bundle.tar.gz"
+    storage.objects.update({key: bundle, MANIFEST_KEY: evidence})
+    args = type("Args", (), {"run_id": RUN, "run_root": str(tmp_path / "runs"), "bucket": "private-runs",
+                            "key": key, "sha256": hashlib.sha256(bundle).hexdigest()})()
+    with patch.dict(os.environ, {"ELIZA_TRAINING_PYTHON": sys.executable}):
+        assert runner.execute(args, storage) == 0
+    assert storage.objects[prefix + "/artifacts/report.json"] == b"{}"
+    assert json.loads(storage.objects[prefix + "/result.json"])["outcome"] == "succeeded"
+
+
 def test_cancel_refuses_reused_or_wrong_job_identity(repo):
     storage = Storage()
     request, _ = transport()
