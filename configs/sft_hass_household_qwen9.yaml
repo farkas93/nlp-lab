@@ -1,0 +1,37 @@
+config_schema_version: 2
+identity: {experiment_tag: hass_household, backend: trl}
+data:
+  bucket: sft-datasets
+  dataset_id: hass_household_private
+  dataset_version: SET_FROM_RELEASE
+  expected_manifest_sha256: SET_FROM_RELEASE
+model:
+  owner: Qwen
+  name: Qwen3.5-9B
+  revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+  architecture: qwen3_5_conditional_generation
+  max_seq_len: 131072
+  use_bf16: true
+  load_in_4bit: false
+  use_lora: true
+  loss_mode: assistant_only
+  enable_thinking: false
+  lora_r: 16
+  lora_alpha: 16
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+training:
+  output_root: artifacts/checkpoints
+  max_steps: 100
+  probe_longest_row: true
+  train_batch_size: 1
+  eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  warmup_steps: 5
+  logging_steps: 1
+  eval_strategy: epoch
+  save_strategy: 'no'
+  gradient_checkpointing: true
+hub: {push_to_hub: false, publish_full_model: false}
+tracking: {}
+runtime: {tokenizer_type: qwen}

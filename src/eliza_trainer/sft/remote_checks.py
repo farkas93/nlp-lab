@@ -34,10 +34,23 @@ def fetch_adapter(storage, bucket, prefix, source_run_id, pin, destination):
         raise ValueError("Source archive is missing a complete final adapter and tokenizer")
     destination.mkdir()
     for name, entry in files.items():
-        payload = download(storage, bucket, f"{root}/artifacts/{entry['path']}")
-        if len(payload) != entry["size"] or hashlib.sha256(payload).hexdigest() != entry["sha256"]:
+        if type(entry.get("size")) is not int or not 0 < entry["size"] <= 512 * 1024 * 1024:
+            raise ValueError("Invalid or excessive adapter artifact size")
+        response = storage.get_object(Bucket=bucket, Key=f"{root}/artifacts/{entry['path']}")
+        body = response["Body"]
+        size, checksum = 0, hashlib.sha256()
+        try:
+            with (destination / name).open("xb") as output:
+                while chunk := body.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > entry["size"]:
+                        raise ValueError(f"Source adapter checksum mismatch: {name}")
+                    checksum.update(chunk)
+                    output.write(chunk)
+        finally:
+            body.close()
+        if size != entry["size"] or checksum.hexdigest() != entry["sha256"]:
             raise ValueError(f"Source adapter checksum mismatch: {name}")
-        (destination / name).write_bytes(payload)
     return json.loads((destination / "adapter_config.json").read_bytes())
 
 
@@ -49,8 +62,8 @@ def evaluate(config, archive, directory):
     from src.sft_dataset_loader import load_sft_manifest_dataset, tokenize_with_loss_mode
 
     model_config = config.model
-    if model_config.architecture != "qwen3_5_conditional_generation" or not model_config.revision:
-        raise ValueError("Archived-adapter evaluation currently requires a pinned Qwen3.5 checkpoint")
+    if model_config.architecture not in {"qwen3_5_conditional_generation", "gemma4_conditional_generation"} or not model_config.revision:
+        raise ValueError("Archived-adapter evaluation requires a pinned qualified model architecture")
     if archive.get("base_model_name_or_path") != model_config.model_name or archive.get("revision") != model_config.revision:
         raise ValueError("Archived adapter base model or revision differs from the evaluation config")
     data = config.data
@@ -61,16 +74,20 @@ def evaluate(config, archive, directory):
     reply = next((i for i in ordered if held[i]["target_message"].get("content") and held[i]["messages"][-1]["role"] == "tool"), None)
     if call is None or reply is None:
         raise ValueError("Held-out split lacks a tool call or a post-tool reply")
-    fixed = held.select([call, reply])
+    fixed = held.select(ordered)
     tokenizer = AutoTokenizer.from_pretrained(directory, local_files_only=True)
     native = AutoConfig.from_pretrained(model_config.model_name, revision=model_config.revision).get_text_config().max_position_embeddings
     encoded = tokenize_with_loss_mode(fixed, tokenizer, native - 96, "assistant_only",
                                        tokenizer_type=config.runtime.tokenizer_type, enable_thinking=model_config.enable_thinking)
-    base = Qwen3_5ForConditionalGeneration.from_pretrained(model_config.model_name, revision=model_config.revision,
+    loader = Qwen3_5ForConditionalGeneration
+    if model_config.architecture == "gemma4_conditional_generation":
+        from transformers import Gemma4ForConditionalGeneration
+        loader = Gemma4ForConditionalGeneration
+    base = loader.from_pretrained(model_config.model_name, revision=model_config.revision,
                                                          dtype=torch.bfloat16, device_map={"": 0})
     model = PeftModel.from_pretrained(base, directory).eval()
     results = []
-    for example, row in zip(fixed, encoded, strict=True):
+    for number, (example, row) in enumerate(zip(fixed, encoded, strict=True), start=1):
         boundary = next(i for i, label in enumerate(row["labels"]) if label != -100)
         prompt = torch.tensor([row["input_ids"][:boundary]], device=model.get_input_embeddings().weight.device)
         args = dict(input_ids=prompt, attention_mask=torch.ones_like(prompt), do_sample=False, max_new_tokens=96)
@@ -78,8 +95,13 @@ def evaluate(config, archive, directory):
             with model.disable_adapter():
                 original = model.generate(**args)[0, boundary:]
             tuned = model.generate(**args)[0, boundary:]
-        results.append(dict(example_id=example["example_id"], target=tokenizer.decode(row["input_ids"][boundary:]),
-                            base=tokenizer.decode(original), adapter=tokenizer.decode(tuned)))
+        target = tokenizer.decode(row["input_ids"][boundary:])
+        results.append(dict(example_id=example["example_id"], family=example.get("family"), target=target,
+                            base=tokenizer.decode(original), adapter=tokenizer.decode(tuned),
+                            base_exact=original.tolist() == row["input_ids"][boundary:],
+                            adapter_exact=tuned.tolist() == row["input_ids"][boundary:],
+                            base_hit_output_budget=len(original) == 96, adapter_hit_output_budget=len(tuned) == 96))
+        print("ELIZA_PROGRESS " + json.dumps(dict(stage="evaluating_held_out", step=number, total=len(fixed))), flush=True)
     return results
 
 
@@ -99,10 +121,15 @@ def main():
     output = Path("artifacts")
     output.mkdir(exist_ok=True)
     if args.kind == "hass-context":
+        from nlp_training.tracking import verify_tracking
+        if not config.tracking.mlflow_tracking_uri:
+            raise ValueError("Remote MLflow tracking must be configured before preflight")
+        tracking = verify_tracking(config.tracking.mlflow_tracking_uri, config.training.experiment_name)
         report = measure(data.manifest_uri, data.expected_manifest_sha256, model=model.model_name,
                          revision=model.revision, tokenizer_revision=model.tokenizer_revision,
                          budget=model.max_seq_len, tokenizer_type=config.runtime.tokenizer_type,
-                         enable_thinking=model.enable_thinking)
+                          enable_thinking=model.enable_thinking)
+        report["mlflow"] = tracking
         name = "context-preflight.json"
     else:
         from nlp_training.worker import client
@@ -114,6 +141,10 @@ def main():
         report = {"source_run_id": source_run_id, "dataset_manifest": pin, "model": model.model_name,
                   "revision": model.revision, "job_id": os.getenv("SLURM_JOB_ID"),
                   "examples": evaluate(config, adapter, directory)}
+        results = report["examples"]
+        report["metrics"] = {"rows": len(results), "base_exact_rate": sum(row["base_exact"] for row in results) / len(results),
+                             "adapter_exact_rate": sum(row["adapter_exact"] for row in results) / len(results),
+                             "note": "Exact token match is strict; not a semantic tool/entity correctness metric. No tools executed."}
         name = "held-out-comparison.json"
     (output / name).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

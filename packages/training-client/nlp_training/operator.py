@@ -9,24 +9,26 @@ from urllib.parse import urlsplit
 
 SETTINGS = ("NLP_LAB_REPO", "INFERENCE_CONTROL_URL", "CONTROL_DAEMON_TOKEN_FILE",
             "SLURM_REST_URL", "SLURM_ARTIFACT_BUCKET", "MLFLOW_TRACKING_URI",
-            "DAGSTER_GRAPHQL_URL", "STORAGE_URL")
+            "DAGSTER_GRAPHQL_URL", "STORAGE_URL", "STORAGE_ACCOUNT_FILE", "STORAGE_KEY_FILE", "AWS_REGION", "HF_TOKEN_FILE")
 MLFLOW_AUTH = ("MLFLOW_TRACKING_TOKEN", "MLFLOW_TRACKING_USERNAME", "MLFLOW_TRACKING_PASSWORD")
 
 
-def workspace_settings(root, overrides=None):
+def workspace_settings(root, overrides=None, *, filename="training.env"):
     from dotenv import dotenv_values
 
     keys = (*SETTINGS, *(name + "_FILE" for name in MLFLOW_AUTH))
-    path = Path(root).expanduser() / ".env"
+    path = Path(root).expanduser() / filename
     values = dotenv_values(path, interpolate=False) if path.is_file() else {}
+    if not path.is_file():
+        raise ValueError(f"Missing visible workspace configuration: {path}; run scripts/setup_training_workspace.py")
     if set(values) - set(keys):
-        raise ValueError("Unknown workspace .env keys: " + ", ".join(sorted(set(values) - set(keys))))
+        raise ValueError(f"Unknown keys in {path}: " + ", ".join(sorted(set(values) - set(keys))))
     overrides = overrides or {}
     if set(overrides) - set(keys):
         raise ValueError("Unknown workspace overrides")
     resolved, origins = {}, {}
     for key in keys:
-        for source, options in (("notebook", overrides), ("workspace .env", values), ("deployment", os.environ)):
+        for source, options in (("notebook", overrides), (str(path), values), ("deployment", os.environ)):
             if options.get(key):
                 resolved[key] = options[key]
                 origins[key] = source
@@ -51,6 +53,29 @@ def mlflow_environment(settings):
         elif os.environ.get(key):
             result[key] = os.environ[key]
     return result
+
+
+def connect_workspace(root, overrides=None):
+    from eliza_storage import ElizaStorage
+    from eliza_training import ElizaTraining
+    from eliza_dagster import ElizaDagster
+
+    settings, origins = workspace_settings(root, overrides)
+    values = {name: Path(settings[name + "_FILE"]).expanduser().read_text().strip()
+              for name in ("STORAGE_ACCOUNT", "STORAGE_KEY") if settings.get(name + "_FILE")}
+    storage = ElizaStorage(endpoint_url=settings.get("STORAGE_URL"), access_key=values.get("STORAGE_ACCOUNT"),
+                           secret_key=values.get("STORAGE_KEY"), region_name=settings.get("AWS_REGION"))
+    token_file = settings.get("CONTROL_DAEMON_TOKEN_FILE")
+    token = Path(token_file).expanduser().read_text().strip() if token_file else None
+    training = ElizaTraining(bucket=settings["SLURM_ARTIFACT_BUCKET"], storage=storage,
+                             control_url=settings["INFERENCE_CONTROL_URL"], endpoint_url=settings.get("SLURM_REST_URL"),
+                             control_token=token)
+    dagster = ElizaDagster(graphql_url=settings.get("DAGSTER_GRAPHQL_URL"))
+    print("Configuration file:", Path(root) / "training.env")
+    print("Run records:", Path(root) / "runs")
+    print("Resolved settings:", {key: {"value": value, "source": origins[key]} for key, value in settings.items() if not key.endswith("_FILE")})
+    print("DGX mode:", training.environment().get("phase"))
+    return settings, storage, training, dagster
 
 
 def format_status(status):
@@ -86,6 +111,10 @@ def prepare_run(repo, run_dir, *, kind, config, pin, bucket, resources):
     run_id = str(uuid.UUID(existing["run_id"]))
     relative = f"configs/private-hass-{run_id}.yaml"
     path = Path(repo) / relative
+    local_config = run_dir / "resolved-config.yaml"
+    if local_config.exists() and local_config.read_text() != config_text:
+        raise ValueError("Local resolved config differs from the prepared plan")
+    local_config.write_text(config_text)
     if not path.exists():
         with path.open("x") as out:
             out.write(config_text)
@@ -104,18 +133,59 @@ def submit_prepared(training, repo, run_dir, *, kind, config, pin, resources, se
         return run_id
     if input(f"Type SUBMIT to run {kind} on the private dataset {pin['sha256']}: ").strip() != "SUBMIT":
         raise RuntimeError("Submission not requested")
-    env = {**mlflow_environment(settings), "ELIZA_MLFLOW_METRICS_ONLY": "1"} if kind == "sft" else {}
+    env = {**mlflow_environment(settings), "ELIZA_MLFLOW_METRICS_ONLY": "1"} if kind in {"sft", "hass-context"} else {}
+    if settings.get("HF_TOKEN_FILE"):
+        env["HF_TOKEN"] = Path(settings["HF_TOKEN_FILE"]).expanduser().read_text().strip()
     training.environment("training")
     with marker.open("x") as handle:
         json.dump({"run_id": run_id}, handle)
-    training.submit(repo=repo, config=relative, run_id=run_id, kind=kind, dataset_manifest=pin,
+    receipt = training.submit(repo=repo, config=relative, run_id=run_id, kind=kind, dataset_manifest=pin,
                     restricted_manifest_ack_sha256=pin["sha256"], runtime_source=Path(repo) / "packages/training-client",
                     runtime_profile="context" if kind == "hass-context" else "trl",
                     job_environment=env, **resources)
+    (Path(run_dir) / "submission.json").write_text(json.dumps(receipt, indent=2))
     return run_id
 
 
-def read_report(training, run_id, name):
+def watch_run(training, run_id, run_dir, *, poll_seconds=5, timeout_seconds=7200, render=None):
+    """Persist state and display a bounded live log without importing model packages."""
+    import time
+    from botocore.exceptions import ClientError
+
+    folder = Path(run_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_seconds
+    previous = None
+    training.discover()
+    while True:
+        state = training.status(run_id)
+        tail = ""
+        try:
+            tail = training.storage.read_bytes(bucket=training.bucket,
+                key=f"{training.prefix}/{run_id}/live-log.txt", max_bytes=65536).decode("utf-8", errors="replace")
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "404"}:
+                raise
+        view = (state, tail)
+        if view != previous:
+            (folder / "status.json").write_text(json.dumps(state, indent=2))
+            (folder / "live-log.txt").write_text(tail)
+            if render:
+                render(state, tail)
+            else:
+                print(format_status(state))
+            previous = view
+        if state.get("terminal"):
+            (folder / "result.json").write_text(json.dumps(state, indent=2))
+            if state.get("outcome") != "succeeded":
+                raise RuntimeError(f"{format_status(state)}; see {folder}/live-log.txt and the remote train.log")
+            return state
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Monitoring stopped; remote run {run_id} continues. Re-run this monitor to reconnect.")
+        time.sleep(poll_seconds)
+
+
+def read_report(training, run_id, name, *, run_dir=None):
     if name not in {"context-preflight.json", "held-out-comparison.json", "training-summary.json"}:
         raise ValueError("Unknown run report")
     root = f"{training.prefix}/{run_id}"
@@ -130,4 +200,8 @@ def read_report(training, run_id, name):
     payload = store.read_bytes(bucket=training.bucket, key=f"{root}/artifacts/{name}", max_bytes=1024 * 1024)
     if len(payload) != matches[0]["size"] or hashlib.sha256(payload).hexdigest() != matches[0]["sha256"]:
         raise ValueError(f"Archived report checksum mismatch: {name}")
-    return json.loads(payload)
+    report = json.loads(payload)
+    if run_dir is not None:
+        Path(run_dir).mkdir(parents=True, exist_ok=True)
+        (Path(run_dir) / name).write_bytes(payload)
+    return report

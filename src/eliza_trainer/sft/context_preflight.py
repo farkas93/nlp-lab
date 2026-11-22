@@ -31,7 +31,7 @@ def measure(manifest_uri, digest, *, model, revision, tokenizer_revision, budget
     tokenizer = AutoTokenizer.from_pretrained(model, revision=tokenizer_revision, add_eos_token=True, use_fast=True)
     data = load_sft_manifest_dataset(manifest_uri=manifest_uri, train_split="train", eval_split="eval",
                                      max_train_samples=None, max_eval_samples=None, expected_manifest_sha256=digest)
-    if data.manifest.get("kind") != "hass-experimental-sft-v1":
+    if data.manifest.get("kind") not in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
         raise ValueError("Expected the private HASS smoke export")
     reports = {}
     for split, dataset in (("train", data.train_dataset), ("eval", data.eval_dataset)):

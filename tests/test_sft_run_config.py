@@ -29,6 +29,16 @@ def test_private_smoke_template_resolves_pinned_bf16_lora(tmp_path):
         load_sft_run_config(str(path))
 
 
+@pytest.mark.parametrize('preset', ['qwen08', 'qwen9', 'gemma4'])
+def test_household_presets_are_pinned_and_private(preset):
+    path = Path(__file__).resolve().parents[1] / f'configs/sft_hass_household_{preset}.yaml'
+    config = load_sft_run_config(str(path))
+    assert len(config.model.revision) == 40
+    assert config.model.use_lora and not config.hub.push_to_hub
+    assert config.model.max_seq_len == 131072
+    assert config.training.max_steps == 100
+
+
 def _write_config(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 

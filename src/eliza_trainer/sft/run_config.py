@@ -364,7 +364,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
             raise ValueError(f"model.{field} must be a full lowercase commit SHA")
     architecture = model_raw.get("architecture", "causal_lm")
-    if architecture not in ("causal_lm", "qwen3_5_conditional_generation"):
+    if architecture not in ("causal_lm", "qwen3_5_conditional_generation", "gemma4_conditional_generation"):
         raise ValueError("Unsupported model.architecture")
     use_lora = model_raw.get("use_lora", backend == "unsloth" or bool(model_raw.get("load_in_4bit", False)))
     if type(use_lora) is not bool or (not use_lora and (backend == "unsloth" or model_raw.get("load_in_4bit", False))):
