@@ -29,7 +29,7 @@ def test_notebook_binds_config_and_never_repeats_submission(tmp_path):
     digest = "a" * 64
     training = Mock(prefix="training/runs")
     storage = Mock()
-    namespace = dict(REPO=repo, PRIVATE_DIR=private_dir, SLURM_ARTIFACT_BUCKET="private-runs",
+    namespace = dict(REPO=repo, PRIVATE_DIR=private_dir, SLURM_ARTIFACT_BUCKET="private-runs", progress={},
                      receipt=dict(manifest_uri="s3://sft-datasets/test/manifest.json", manifest_sha256=digest,
                                   bucket="sft-datasets", dataset_id="hass", dataset_version="experimental-test"),
                      yaml=yaml, json=json, uuid=uuid, storage=storage, ElizaTraining=Mock(return_value=training),
@@ -102,6 +102,7 @@ def test_preview_handoff_freezes_displayed_split_without_manual_decisions():
                                         "examples": {"eval": {"tool_call": {"family": "control", "messages": [],
                                                                               "target_message": {"role": "assistant"}}}}}
     sft.launch_automatic_selection.return_value = "freeze-run"
+    sft.resolve_selection.return_value = {"selection_sha256": "frozen-sha"}
     sft.launch_export.return_value = "export-run"
     sft.resolve_export.return_value = {"data": {}}
     progress = {"selection_run_id": "legacy-manual-run"}
