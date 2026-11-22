@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import json
+from pathlib import Path
 
 import mlflow
 import torch
@@ -12,6 +14,41 @@ from src.eliza_trainer.losses import DataCollatorWithLossMode
 from src.eliza_trainer.losses.weighted_loss_trainer import WeightedLossTrainer
 
 from ..run_config import SFTRunConfig
+
+
+def _probe_longest_row(model, collator, train_dataset, eval_dataset, run_config):
+    split, row = max(((split, row) for split, dataset in (("train", train_dataset), ("eval", eval_dataset))
+                      for row in dataset), key=lambda item: len(item[1]["input_ids"]))
+    length = len(row["input_ids"])
+    device = model.get_input_embeddings().weight.device
+    batch = {key: tensor.to(device) for key, tensor in collator([row]).items()}
+    if run_config.training.gradient_checkpointing:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    model.train()
+    gpu = device.type == "cuda"
+    if gpu:
+        torch.cuda.reset_peak_memory_stats(device)
+    logging.info("Probing longest row before optimization: split=%s tokens=%d", split, length)
+    try:
+        with torch.random.fork_rng(devices=[device] if gpu else []):
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=run_config.model.use_bf16):
+                loss = model(**batch).loss
+            if not torch.isfinite(loss).item():
+                raise RuntimeError("Longest-row probe returned a non-finite loss")
+            loss.backward()
+            grads = [parameter.grad for parameter in model.parameters() if parameter.grad is not None]
+            if not grads or not all(torch.isfinite(grad).all().item() for grad in grads):
+                raise RuntimeError("Longest-row probe did not produce finite gradients")
+            del grads, loss
+    except torch.OutOfMemoryError as exc:
+        raise RuntimeError(f"Longest-row probe ran out of memory at {length} tokens ({split}); no optimizer steps ran") from exc
+    finally:
+        model.zero_grad(set_to_none=True)
+    record = {"split": split, "tokens": length, "peak_cuda_allocated_bytes": torch.cuda.max_memory_allocated(device) if gpu else None}
+    destination = Path(run_config.training.output_dir) / "longest-row-probe.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    logging.info("Longest-row probe passed: %s", record)
 
 
 def run_trl_training(
@@ -84,6 +121,8 @@ def run_trl_training(
     )
 
     data_collator = DataCollatorWithLossMode(tokenizer=tokenizer)
+    if run_config.training.probe_longest_row:
+        _probe_longest_row(model, data_collator, train_dataset, eval_dataset, run_config)
     
     # Use custom trainer for weighted mode, standard Trainer otherwise
     trainer_cls = WeightedLossTrainer if run_config.model.loss_mode == "weighted" else Trainer

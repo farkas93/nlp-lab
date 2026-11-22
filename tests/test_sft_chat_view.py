@@ -126,6 +126,14 @@ def test_pinned_qwen_native_call_and_post_tool_speech(tokenization):
     assert targets[1].startswith(speech["target_text"])
     assert all("<think>" not in target for target in targets)
 
+    measured = tokenize(Dataset.from_list([action, speech]), tokenizer, 32, "assistant_only",
+                        enable_thinking=False, measure_only=True)
+    assert measured.column_names == ["example_id", "episode_id", "prompt_tokens", "target_tokens", "total_tokens"]
+    for stats, row in zip(measured, rows, strict=True):
+        assert stats["total_tokens"] == len(row["input_ids"]) > 32
+        assert stats["prompt_tokens"] == row["labels"].count(-100)
+        assert stats["target_tokens"] == len(row["labels"]) - row["labels"].count(-100)
+
 
 def test_hass_loader_consumes_only_pinned_parquet_bytes(tmp_path, tokenization):
     import pyarrow as pa

@@ -79,6 +79,7 @@ class SFTTrainingConfig:
     backend: str = "trl"
     num_train_epochs: int = 1
     max_steps: int = -1
+    probe_longest_row: bool = False
     learning_rate: float = 2e-5
     train_batch_size: int = 2
     eval_batch_size: int = 2
@@ -371,6 +372,9 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     if backend != "trl" and (architecture != "causal_lm" or revision is not None or tokenizer_revision is not None):
         raise ValueError("Pinned or explicit architecture loading is currently supported by the TRL backend only")
     max_steps = training_raw.get("max_steps", -1)
+    probe_longest_row = training_raw.get("probe_longest_row", False)
+    if type(probe_longest_row) is not bool or (probe_longest_row and (backend != "trl" or loss_mode != "assistant_only")):
+        raise ValueError("training.probe_longest_row requires a boolean and supports TRL assistant-only SFT")
     if type(max_steps) is not int or (max_steps != -1 and max_steps < 1):
         raise ValueError("training.max_steps must be -1 or a positive integer")
     model = SFTModelConfig(
@@ -413,6 +417,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         backend=backend,
         num_train_epochs=int(training_raw.get("num_train_epochs", 1)),
         max_steps=max_steps,
+        probe_longest_row=probe_longest_row,
         learning_rate=float(training_raw.get("learning_rate", 2e-5)),
         train_batch_size=int(training_raw.get("train_batch_size", 2)),
         eval_batch_size=int(training_raw.get("eval_batch_size", 2)),

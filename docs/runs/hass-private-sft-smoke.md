@@ -34,6 +34,29 @@ and set `data.bucket`, `data.dataset_id`, `data.dataset_version` and
 public Qwen3.5-0.8B model and tokenizer to the same commit, uses BF16 LoRA,
 target-only loss, 12 optimizer steps and local MLflow tracking inside `artifacts/`.
 
+## Measure context before allocating a GPU
+
+Run **Measure context on CPU** in the notebook. It mirrors the verified frozen
+export locally and invokes `src.eliza_trainer.sft.context_preflight` using
+`requirements.context-preflight.txt`. It downloads the pinned tokenizer and
+config, not weights. Its private `context-preflight.json` records prompt,
+target and total length distributions by split, over-budget counts, and the
+longest example IDs. Measurement uses the same rendering and target boundary
+checks as the trainer but does not drop or truncate long rows.
+
+Prepare uses the suggested budget (the larger of the template baseline and
+the longest row rounded up to 1,024 tokens, bounded by the native window).
+The longest row must fit the native window. A larger admission budget does not
+pad every training row to that length or guarantee GPU fit. The smoke probes
+the longest row across both splits with a forward/backward pass before any
+optimizer steps; the archived `longest-row-probe.json` records the length and
+peak CUDA allocation. See [model and context options](hass-model-context.md).
+
+For a terminal failure such as job 7, keep the same `PRIVATE_DIR` and frozen
+export, rerun measurement, and set `ATTEMPT_NAME = 'retry-01'` in Prepare. This
+creates a new run UUID and submission marker, preserving the previous attempt.
+For an uncertain submission, recover its original UUID first.
+
 With the SFT dependencies and access to the dataset, the following loads the
 real splits, checks their bytes, renders and tokenizes all rows, reports maximum
 context length, and exits before loading model weights. Run interactively to
@@ -83,7 +106,8 @@ prefix and `train.log`, `environment.json`, `dataset-manifest.json`, and
 ## Acceptance evidence
 
 1. Check the worker outcome is `succeeded`, both preflight splits are nonempty
-   with no lost/truncated rows, and the final Trainer global step is 12.
+   with no lost/truncated rows, the longest-row probe passed, and the final
+   Trainer global step is 12.
 2. Download the `final/` adapter and tokenizer files using the private storage
    adapter and verify their hashes against the artifact index. Check that
    `adapter_config.json` records the configured base model and revision.
