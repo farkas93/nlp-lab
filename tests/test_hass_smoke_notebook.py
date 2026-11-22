@@ -93,11 +93,24 @@ def test_capture_handoff_computes_candidate_pin_and_resumes(tmp_path):
     pilot.use_archived_source.assert_called_once_with(progress["source_key"])
     assert pilot.ingest_run_id == "ingest-1" and pilot.generate_run_id == "generate-1"
 
-    steps = [{"role": "assistant", "tool_calls": [{}]}, {"role": "tool"}, {"role": "assistant", "content": "Done."}]
-    namespace["episodes"] = {i: {"episode_id": str(i), "base_task_id": str(i), "household_group_id": "home", "steps": steps}
-                             for i in (1, 2)}
-    namespace["input"] = Mock(side_effect=["1", "2", "", "operator", "smoke"])
-    exec(code["decisions"], namespace)
-    assert json.loads((tmp_path / "decisions.json").read_text())["assignments"] == {"1": "train", "2": "eval"}
-    namespace["input"] = Mock(side_effect=AssertionError("must not prompt on resume"))
-    exec(code["decisions"], namespace)
+
+def test_preview_handoff_freezes_displayed_split_without_manual_decisions():
+    code = notebook_cells()
+    sft = Mock()
+    sft.launch_preview.return_value = "preview-run"
+    sft.resolve_preview.return_value = {"selection_id": "previewed", "splits": {}, "groups": [], "excluded_episodes": 0,
+                                        "examples": {"eval": {"tool_call": {"family": "control", "messages": [],
+                                                                              "target_message": {"role": "assistant"}}}}}
+    sft.launch_automatic_selection.return_value = "freeze-run"
+    sft.launch_export.return_value = "export-run"
+    sft.resolve_export.return_value = {"data": {}}
+    progress = {"selection_run_id": "legacy-manual-run"}
+    namespace = dict(HassSftWorkflow=Mock(return_value=sft), CANDIDATES_KEY="key", CANDIDATES_SHA256="sha",
+                     SOURCE_BUCKET="synthetic", DESTINATION_BUCKET="sft-datasets", storage=Mock(), progress=progress,
+                     remember=lambda **values: progress.update(values), json=json)
+    for cell in ("review", "examples", "selection", "export"):
+        exec(code[cell], namespace)
+    sft.launch_automatic_selection.assert_called_once_with(expected_selection_id="previewed")
+    assert progress["preview_run_id"] == "preview-run"
+    assert progress["automatic_selection_run_id"] == "freeze-run"
+    assert progress["automatic_export_run_id"] == "export-run"

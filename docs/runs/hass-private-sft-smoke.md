@@ -4,8 +4,9 @@ For a single guided operator flow, open
 [`notebooks/hass_private_sft_end_to_end.ipynb`](../../notebooks/hass_private_sft_end_to_end.ipynb).
 Run its sections in order to assess the whole pipeline. It includes the Home
 Assistant capture recipe, derives the candidate pins from the generation run,
-and saves your reviewed episode assignments and Dagster run IDs locally for
-reconnection. Use a new private directory for a different capture or experiment.
+and previews an automatic grouped split before freezing it. Dagster run IDs are
+saved locally for reconnection. Use a new private directory for a different
+capture or experiment, or if an older manual split is already bound to a training run.
 
 Run this from Jupyter with access to the deployed Dagster jobs, private MinIO
 buckets and DGX control token. Use the current `feature/training-boundaries`
@@ -23,8 +24,9 @@ kernel and then restart it:
 
 ## Freeze and configure
 
-Use the HASS export notebook to review all episodes, save explicit grouped
-train/eval/excluded decisions and resolve the exact frozen export. Keep the
+Use the end-to-end notebook to preview the automatic split, freeze it, and
+resolve the exact export. Dagster must expose `preview_hass_smoke_split` and
+`freeze_hass_smoke_split`, and Jupyter must have the updated `eliza_hass` helper. Keep the
 manifest URI and stored-byte SHA-256. Copy
 `configs/sft_hass_private_smoke.template.yaml` to `configs/private-hass-smoke.yaml`
 and set `data.bucket`, `data.dataset_id`, `data.dataset_version` and
