@@ -161,6 +161,10 @@ def execute(args, storage):
                 command = [training_python, "-m", f"src.eliza_trainer.{kind}.train", "--config", manifest["config"]]
             if ack is not None and kind in {"sft", "dpo"}:
                 command.append("--assume-yes")
+            if config.get("identity", {}).get("backend") == "unsloth" and kind != "hass-context":
+                if manifest["runtime"]["profile"] != "unsloth-gemma4":
+                    raise ValueError("Unsloth jobs require their isolated unsloth-gemma4 runtime")
+                command = [training_python, "-m", "nlp_training.unsloth_entry", *command[2:]]
             child_env = os.environ.copy()
             if child_env.get("ELIZA_MLFLOW_METRICS_ONLY") == "1":
                 child_env.pop("HF_MLFLOW_LOG_ARTIFACTS", None)

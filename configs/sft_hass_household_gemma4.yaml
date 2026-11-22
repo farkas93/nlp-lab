@@ -1,14 +1,14 @@
 config_schema_version: 2
-identity: {experiment_tag: hass_household, backend: trl}
+identity: {experiment_tag: hass_household_unsloth, backend: unsloth}
 data:
   bucket: sft-datasets
   dataset_id: hass_household_private
   dataset_version: SET_FROM_RELEASE
   expected_manifest_sha256: SET_FROM_RELEASE
 model:
-  owner: google
+  owner: unsloth
   name: gemma-4-E4B-it
-  revision: 4ecc2ba63bcac23ba4a767fc87025b1450f84c9c
+  revision: 4e22d7e59e078e63a14f351efdc5232ed366b621
   architecture: gemma4_conditional_generation
   max_seq_len: 131072
   use_bf16: true
@@ -18,13 +18,12 @@ model:
   enable_thinking: false
   lora_r: 16
   lora_alpha: 16
-  # Gemma 4 uses these projections only to validate intent; the trainer adapts
-  # the text decoder's inner Linear layers automatically and leaves vision/audio frozen.
-  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  lora_dropout: 0
 training:
   output_root: artifacts/checkpoints
   max_steps: 100
   probe_longest_row: true
+  qualify_save_reload: false
   train_batch_size: 1
   eval_batch_size: 1
   gradient_accumulation_steps: 4

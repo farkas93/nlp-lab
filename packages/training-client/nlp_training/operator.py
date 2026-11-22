@@ -143,7 +143,8 @@ def submit_prepared(training, repo, run_dir, *, kind, config, pin, resources, se
         json.dump({"run_id": run_id}, handle)
     receipt = training.submit(repo=repo, config=relative, run_id=run_id, kind=kind, dataset_manifest=pin,
                     restricted_manifest_ack_sha256=pin["sha256"], runtime_source=Path(repo) / "packages/training-client",
-                    runtime_profile="context" if kind == "hass-context" else "trl",
+                    runtime_profile=("context" if kind == "hass-context" else
+                                     "unsloth-gemma4" if config["identity"]["backend"] == "unsloth" else "trl"),
                     job_environment=env, **resources)
     (Path(run_dir) / "submission.json").write_text(json.dumps(receipt, indent=2))
     return run_id

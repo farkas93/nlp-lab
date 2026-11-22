@@ -113,3 +113,16 @@ def test_remote_reload_checks_archive_integrity(tmp_path):
     objects[root + '/artifacts/checkpoints/final/adapter_model.safetensors'] = b'corrupt'
     with pytest.raises(ValueError, match='checksum mismatch'):
         fetch(tmp_path / 'corrupt-adapter')
+
+
+@pytest.mark.parametrize('kind,profile', [('hass-context', 'context'), ('sft', 'unsloth-gemma4'), ('hass-eval', 'unsloth-gemma4')])
+def test_operator_selects_isolated_unsloth_runtime(tmp_path, monkeypatch, kind, profile):
+    from unittest.mock import Mock
+    from nlp_training.operator import submit_prepared
+    (tmp_path / 'configs').mkdir()
+    training = Mock(bucket='private-runs')
+    training.submit.return_value = {'job_id': 1}
+    monkeypatch.setattr('builtins.input', lambda _: 'SUBMIT')
+    submit_prepared(training, tmp_path, tmp_path / 'runs/test', kind=kind,
+                    config={'identity': {'backend': 'unsloth'}}, pin={'sha256': 'a' * 64}, resources={}, settings={})
+    assert training.submit.call_args.kwargs['runtime_profile'] == profile
