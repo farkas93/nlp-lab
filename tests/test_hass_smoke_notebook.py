@@ -29,7 +29,11 @@ def test_notebook_binds_config_and_never_repeats_submission(tmp_path):
     digest = "a" * 64
     training = Mock(prefix="training/runs")
     storage = Mock()
-    namespace = dict(REPO=repo, PRIVATE_DIR=private_dir, SLURM_ARTIFACT_BUCKET="private-runs", progress={},
+    model = yaml.safe_load((repo / "configs/sft_hass_private_smoke.template.yaml").read_text())["model"]
+    report = dict(manifest_sha256=digest, model=f"{model['owner']}/{model['name']}", revision=model["revision"],
+                  tokenizer_revision=model["revision"], tokenizer_type="qwen", enable_thinking=False,
+                  fits_native_context=True, native_context=262144, required_tokens=5100, suggested_budget=5120)
+    namespace = dict(REPO=repo, PRIVATE_DIR=private_dir, SLURM_ARTIFACT_BUCKET="private-runs", progress={}, context_report=report,
                      receipt=dict(manifest_uri="s3://sft-datasets/test/manifest.json", manifest_sha256=digest,
                                   bucket="sft-datasets", dataset_id="hass", dataset_version="experimental-test"),
                      yaml=yaml, json=json, uuid=uuid, storage=storage, ElizaTraining=Mock(return_value=training),
@@ -38,6 +42,7 @@ def test_notebook_binds_config_and_never_repeats_submission(tmp_path):
     exec(code["prepare"], namespace)
     run_id = namespace["run_id"]
     assert yaml.safe_load(namespace["config_path"].read_text())["data"]["expected_manifest_sha256"] == digest
+    assert namespace["cfg"]["model"]["max_seq_len"] == 5120
     with pytest.raises(ValueError, match="Acknowledgement"):
         exec(code["submit"], namespace)
     training.environment.assert_not_called()
@@ -67,6 +72,19 @@ def test_notebook_binds_config_and_never_repeats_submission(tmp_path):
     artifacts["adapter_model.safetensors"] = b"changed"
     with pytest.raises(ValueError, match="Artifact checksum mismatch"):
         exec(code["artifacts"], namespace)
+
+    prepare_retry = code_for_retry()
+    exec(prepare_retry, namespace)
+    assert namespace["run_id"] != run_id
+    assert namespace["pin"]["sha256"] == digest
+    assert (private_dir / "submit-attempt.json").exists()
+    assert not (namespace["RUN_DIR"] / "submit-attempt.json").exists()
+
+
+def code_for_retry():
+    notebook = json.loads((ROOT / "notebooks/hass_private_sft_end_to_end.ipynb").read_text())
+    source = next("".join(cell["source"]) for cell in notebook["cells"] if cell["id"] == "prepare")
+    return compile(source.replace("ATTEMPT_NAME = ''", "ATTEMPT_NAME = 'retry-01'"), "prepare-retry", "exec")
 
 
 def test_capture_handoff_computes_candidate_pin_and_resumes(tmp_path):

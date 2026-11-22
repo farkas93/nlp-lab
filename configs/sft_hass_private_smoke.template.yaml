@@ -25,6 +25,7 @@ model:
 training:
   output_root: artifacts/checkpoints
   max_steps: 12
+  probe_longest_row: true
   train_batch_size: 1
   eval_batch_size: 1
   gradient_accumulation_steps: 1

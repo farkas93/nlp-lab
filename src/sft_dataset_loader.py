@@ -623,6 +623,7 @@ def tokenize_with_loss_mode(
     return_stats: bool = False,
     tokenizer_type: str | None = None,
     enable_thinking: bool = True,
+    measure_only: bool = False,
 ) -> Dataset | tuple[Dataset, TokenizationStats]:
     """Tokenize dataset with configurable loss masking.
     
@@ -651,6 +652,8 @@ def tokenize_with_loss_mode(
                         Set to False for Qwen3/3.5 models to disable <think> tags
                         in Home Assistant and other tool-calling scenarios.
                         When False, the model is trained to skip reasoning.
+        measure_only: For assistant-decision rows, return token counts and IDs
+                      without truncation, admission checks, or retaining token IDs.
     
     Returns:
         Tokenized dataset, optionally with tokenization statistics
@@ -728,6 +731,8 @@ def tokenize_with_loss_mode(
 
     def _tokenize(example: dict[str, Any]) -> dict[str, Any]:
         decision_row = example.get("target_mode") == "assistant_decision"
+        if measure_only and not decision_row:
+            raise ValueError("Context measurement requires assistant-decision rows")
         if decision_row and not (loss_mode == "assistant_only" or (loss_mode == "weighted" and prompt_loss_weight == 0)):
             raise ValueError("Assistant-decision rows require current-target-only loss")
         messages = example.get("messages")
@@ -739,6 +744,8 @@ def tokenize_with_loss_mode(
         if not isinstance(messages, list) or (
             not isinstance(target_text, str) and target_message_normalized is None
         ):
+            if decision_row:
+                raise ValueError("Assistant-decision row has invalid messages")
             payload = _build_template_debug_payload(
                 split_name=split_name,
                 example=example,
@@ -788,6 +795,8 @@ def tokenize_with_loss_mode(
             for msg in prompt_messages
         )
         if not has_user_query:
+            if decision_row:
+                raise ValueError("Assistant-decision row has no visible user query")
             payload = _build_template_debug_payload(
                 split_name=split_name,
                 example=example,
@@ -869,8 +878,14 @@ def tokenize_with_loss_mode(
             raise ValueError("Tokenizer returned non-list input_ids")
         if decision_row:
             require_target_prefix(prompt_ids, full_ids)
+            if measure_only:
+                return {"example_id": example.get("example_id"), "episode_id": example.get("episode_id"),
+                        "prompt_tokens": len(prompt_ids), "target_tokens": len(full_ids) - len(prompt_ids),
+                        "total_tokens": len(full_ids)}
             if len(full_ids) > max_seq_len:
-                raise ValueError("Assistant-decision row exceeds max_seq_len; preserve its full visible context")
+                raise ValueError(f"Assistant decision {example.get('example_id')} in {split_name} needs "
+                                 f"{len(full_ids)} tokens ({len(prompt_ids)} prompt), exceeds max_seq_len={max_seq_len}; "
+                                 "measure the frozen export and preserve its full visible context")
 
         prompt_len = min(len(prompt_ids), len(full_ids))
         is_truncated = 0
@@ -922,6 +937,8 @@ def tokenize_with_loss_mode(
         
         return result
 
+    if measure_only:
+        return dataset.map(_tokenize, remove_columns=dataset.column_names, load_from_cache_file=False)
     tokenized = dataset.map(_tokenize)
 
     reasons = tokenized["__drop_reason"] if "__drop_reason" in tokenized.column_names else []
