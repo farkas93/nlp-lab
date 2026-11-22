@@ -1,5 +1,9 @@
 # First private HASS SFT smoke
 
+For the current control-only training and evaluation workflow, use
+[the remote operator notebook](hass-remote-operator.md). Use the capture and
+export sections of the end-to-end notebook for dataset preparation.
+
 For a single guided operator flow, open
 [`notebooks/hass_private_sft_end_to_end.ipynb`](../../notebooks/hass_private_sft_end_to_end.ipynb).
 Run its sections in order to assess the whole pipeline. It includes the Home

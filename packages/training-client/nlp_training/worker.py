@@ -66,7 +66,7 @@ def extract_verified(bundle: bytes, digest: str, destination: Path, run_id: str)
             with archive.extractfile(entry) as handle:
                 contents[entry.name] = handle.read()
     manifest = json.loads(contents.pop("run-manifest.json"))
-    if manifest.get("version") != 2 or manifest.get("run_id") != run_id or manifest.get("kind") not in {"sft", "dpo"}:
+    if manifest.get("version") != 2 or manifest.get("run_id") != run_id or manifest.get("kind") not in {"sft", "dpo", "hass-context", "hass-eval"}:
         raise ValueError("Run manifest identity/version mismatch")
     if set(contents) != set(manifest["files"]):
         raise ValueError("Run manifest file membership mismatch")
@@ -108,7 +108,17 @@ def execute(args, storage):
               "artifact_prefix": f"s3://{args.bucket}/{prefix}/artifacts/"}
     return_code = 1
     log_path = run_dir / "train.log"
+
+    def progress(stage, **fields):
+        try:
+            storage.put_object(Bucket=args.bucket, Key=prefix + "/progress.json",
+                               Body=json.dumps(dict(run_id=run_id, stage=stage, **fields)).encode(),
+                               ContentType="application/json")
+        except Exception:
+            pass  # progress is advisory; terminal archival remains authoritative
+
     try:
+        progress("verifying_inputs")
         with log_path.open("wb") as log:
             manifest = extract_verified(download(storage, args.bucket, args.key), args.sha256, workspace, run_id)
             import yaml
@@ -139,18 +149,35 @@ def execute(args, storage):
             environment.update(training_python=training_python,
                                runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
             (run_dir / "environment.json").write_text(json.dumps(environment, indent=2))
-            command = [training_python, "-m", f"src.eliza_trainer.{manifest['kind']}.train", "--config", manifest["config"]]
-            if ack is not None:
+            kind = manifest["kind"]
+            if kind in {"hass-context", "hass-eval"}:
+                if json.loads(evidence).get("kind") != "hass-experimental-sft-v1":
+                    raise ValueError("Expected a private HASS export")
+                command = [training_python, "-m", "src.eliza_trainer.sft.remote_checks", "--kind", kind,
+                           "--config", manifest["config"], "--bucket", args.bucket, "--prefix", prefix]
+            else:
+                command = [training_python, "-m", f"src.eliza_trainer.{kind}.train", "--config", manifest["config"]]
+            if ack is not None and kind in {"sft", "dpo"}:
                 command.append("--assume-yes")
-            child = subprocess.Popen(command, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            child_env = os.environ.copy()
+            if child_env.get("ELIZA_MLFLOW_METRICS_ONLY") == "1":
+                child_env.pop("HF_MLFLOW_LOG_ARTIFACTS", None)
+            child = subprocess.Popen(command, cwd=workspace, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            progress({"hass-context": "measuring_context", "hass-eval": "evaluating_adapter"}.get(kind, "trainer_starting"))
             last_upload = time.monotonic()
             while True:
-                chunk = child.stdout.read1(64 * 1024)
+                chunk = child.stdout.readline(64 * 1024)
                 if not chunk:
                     break
                 log.write(chunk)
                 log.flush()
                 os.write(1, chunk)
+                if chunk.startswith(b"ELIZA_PROGRESS "):
+                    try:
+                        event = json.loads(chunk.removeprefix(b"ELIZA_PROGRESS "))
+                        progress(event.pop("stage"), **event)
+                    except (ValueError, KeyError, TypeError):
+                        pass
                 if time.monotonic() - last_upload >= 30:
                     storage.upload_file(str(log_path), args.bucket, prefix + "/train.log")
                     last_upload = time.monotonic()
@@ -174,6 +201,7 @@ def execute(args, storage):
         # Keep local outcomes even when object storage is unavailable.
         (run_dir / "result.json").write_text(json.dumps(result, indent=2))
         try:
+            progress("archiving_outputs")
             if log_path.exists():
                 storage.upload_file(str(log_path), args.bucket, prefix + "/train.log")
             for name in ("run-manifest.json", "dataset-manifest.json", "environment.json"):

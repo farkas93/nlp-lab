@@ -100,12 +100,14 @@ version = "0.1.0"
 source = { editable = "packages/training-client" }
 dependencies = [
     { name = "boto3" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.42,<2" },
+    { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "uv", marker = "extra == 'provisioning'", specifier = "==0.9.18" },
 ]

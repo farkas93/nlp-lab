@@ -7,7 +7,7 @@ name = "nlp-lab-training"
 version = "0.1.0"
 description = "Lightweight training submission, execution contracts and runtime profiles"
 requires-python = ">=3.10"
-dependencies = ["boto3>=1.42,<2", "PyYAML>=6,<7"]
+dependencies = ["boto3>=1.42,<2", "PyYAML>=6,<7", "python-dotenv>=1,<2"]
 
 [project.optional-dependencies]
 provisioning = ["uv==0.9.18"]
