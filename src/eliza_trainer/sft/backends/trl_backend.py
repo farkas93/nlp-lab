@@ -13,6 +13,7 @@ from src import model_ops
 from src.eliza_trainer.losses import DataCollatorWithLossMode
 from src.eliza_trainer.losses.weighted_loss_trainer import WeightedLossTrainer
 
+from ..lora_targets import matched_names, targets_for
 from ..run_config import SFTRunConfig
 
 
@@ -89,23 +90,23 @@ def run_trl_training(
     if run_config.model.load_in_4bit:
         model = prepare_model_for_kbit_training(model)
     if run_config.model.use_lora:
-        targets = set(run_config.model.lora_target_modules)
-        available = {name.rsplit(".", 1)[-1] for name, _ in model.named_modules()}
-        if not targets or targets - available:
-            raise ValueError(f"Missing LoRA target modules: {sorted(targets - available)}")
+        targets = targets_for(run_config.model.architecture, run_config.model.lora_target_modules)
+        matched = matched_names((name for name, _ in model.named_modules()), targets)
+        if not matched:
+            raise ValueError(f"LoRA target pattern matched no modules: {targets}")
         peft_config = LoraConfig(
             r=run_config.model.lora_r,
             lora_alpha=run_config.model.lora_alpha,
             lora_dropout=run_config.model.lora_dropout,
             bias="none",
             task_type="CAUSAL_LM",
-            target_modules=list(run_config.model.lora_target_modules),
+            target_modules=targets,
         )
         model = get_peft_model(model, peft_config)
         if run_config.model.revision:
             # PEFT uses this when resolving the base for a later adapter reload.
             model.peft_config["default"].revision = run_config.model.revision
-        logging.info("Attached LoRA adapters (4-bit=%s)", run_config.model.load_in_4bit)
+        logging.info("Attached LoRA adapters (4-bit=%s) to %d modules", run_config.model.load_in_4bit, len(matched))
 
     training_args = TrainingArguments(
         output_dir=run_config.training.output_dir,
@@ -182,7 +183,7 @@ def run_trl_training(
         mlflow.log_param("lora_r", run_config.model.lora_r)
         mlflow.log_param("lora_alpha", run_config.model.lora_alpha)
         mlflow.log_param("lora_dropout", run_config.model.lora_dropout)
-        mlflow.log_param("lora_target_modules", ",".join(run_config.model.lora_target_modules))
+        mlflow.log_param("lora_target_modules", targets if isinstance(targets, str) else ",".join(targets))
     mlflow.log_param("hub_push_to_hub", run_config.hub.push_to_hub)
     mlflow.log_param("hub_publish_full_model", run_config.hub.publish_full_model)
 
