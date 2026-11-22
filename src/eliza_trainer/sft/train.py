@@ -510,6 +510,11 @@ def main() -> None:
         )
         if crash_report:
             diagnostics_paths.append(crash_report)
+            # Archive alongside checkpoints so failures remain inspectable even
+            # when remote MLflow artifact upload is disabled.
+            archived = Path("artifacts") / "crash-report.json"
+            archived.parent.mkdir(parents=True, exist_ok=True)
+            archived.write_bytes(crash_report.read_bytes())
         logging.exception("SFT run crashed")
         raise
     finally:

@@ -18,6 +18,8 @@ model:
   enable_thinking: false
   lora_r: 16
   lora_alpha: 16
+  # Gemma 4 uses these projections only to validate intent; the trainer adapts
+  # the text decoder's inner Linear layers automatically and leaves vision/audio frozen.
   lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 training:
   output_root: artifacts/checkpoints
