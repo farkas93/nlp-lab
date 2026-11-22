@@ -30,6 +30,8 @@ def provision(name, root: Path, source: Path, *, check=False):
         # Resolve client and trainer together: s3fs constrains botocore via
         # aiobotocore, while the client constrains the same package via boto3.
         install = [uv, "pip", "install", "--python", python, source]
+        if name == "unsloth-gemma4":
+            install += ["--only-binary", ":all:"]
         if definition["requirements"]:
             requirements = Path(__file__).parent / "profiles" / definition["requirements"]
             install += ["-r", requirements]

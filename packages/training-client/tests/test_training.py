@@ -282,6 +282,25 @@ def test_worker_verifies_dataset_manifest_before_launch(repo, tmp_path):
     assert result["outcome"] == "failed" and "manifest checksum" in result["error"]
 
 
+def test_worker_imports_unsloth_before_training_module(repo, tmp_path):
+    config = repo / 'configs/private.yaml'
+    config.write_text(config.read_text() + '\nidentity: {backend: unsloth}\n')
+    (repo / 'unsloth.py').write_text('import builtins\nbuiltins.unsloth_imported = True\n')
+    (repo / 'src/eliza_trainer/sft/train.py').write_text(
+        'import builtins\nassert builtins.unsloth_imported\n'
+        'from pathlib import Path\nPath("artifacts").mkdir()\nPath("artifacts/proof.txt").write_text("patched")\n')
+    bundle, _ = freeze_bundle(repo, 'configs/private.yaml', run_id=RUN, dataset_manifest=DATASET,
+                              include=('src', 'unsloth.py'), runtime_profile='unsloth-gemma4')
+    storage = Storage()
+    key = f'training/runs/{RUN}/bundle.tar.gz'
+    storage.objects[key] = bundle
+    args = type('Args', (), dict(run_id=RUN, run_root=str(tmp_path / 'runs'), bucket='private-runs',
+                                key=key, sha256=hashlib.sha256(bundle).hexdigest()))()
+    with patch.dict(os.environ, {'ELIZA_TRAINING_PYTHON': sys.executable}):
+        assert runner.execute(args, storage) == 0
+    assert storage.objects[f'training/runs/{RUN}/artifacts/proof.txt'] == b'patched'
+
+
 def test_bundle_rejects_mismatched_pins_and_acknowledgement(repo):
     with pytest.raises(ValueError, match="pin differs"):
         freeze_bundle(repo, "configs/private.yaml", run_id=RUN, dataset_manifest={**DATASET, "sha256": "0" * 64})

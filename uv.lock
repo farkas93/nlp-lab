@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "nlp-lab"
-version = "0.1.4"
+version = "0.1.5"
 source = { virtual = "." }
 dependencies = [
     { name = "nlp-lab-training" },
@@ -96,7 +96,7 @@ dev = [
 
 [[package]]
 name = "nlp-lab-training"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "packages/training-client" }
 dependencies = [
     { name = "boto3" },

@@ -1,6 +1,6 @@
 [project]
 name = "nlp-lab"
-version = "0.1.4"
+version = "0.1.5"
 description = "Manifest-driven model training workspace"
 requires-python = ">=3.10"
 dependencies = ["nlp-lab-training"]
@@ -25,5 +25,6 @@ testpaths = [
   "tests/test_sft_chat_view.py",
   "tests/test_hass_smoke_notebook.py",
   "tests/test_lora_targets.py",
+  "tests/test_unsloth_contract.py",
   "tests/test_system_telemetry.py",
 ]

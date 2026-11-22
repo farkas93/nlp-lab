@@ -478,20 +478,8 @@ def main() -> None:
                     train_dataset=train_dataset,
                     eval_dataset=eval_dataset,
                 )
-                if dataset_result.manifest.get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
-                    output = Path(run_config.training.output_dir)
-                    probe_path = output / "longest-row-probe.json"
-                    summary = {"requested_steps": run_config.training.max_steps, "optimizer_steps": steps,
-                               "dataset_manifest_sha256": dataset_result.manifest_sha256,
-                               "model": run_config.model.model_name, "revision": run_config.model.revision,
-                               "train_rows": len(train_dataset), "eval_rows": len(eval_dataset),
-                               "mlflow_run_id": run_id, "mlflow_experiment_id": active_run.info.experiment_id,
-                               "mlflow_tracking_uri": mlflow.get_tracking_uri(),
-                               "probe": json.loads(probe_path.read_text()) if probe_path.is_file() else None,
-                               "adapter_files": sorted(path.name for path in (output / "final").iterdir() if path.is_file())}
-                    Path("artifacts/training-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
             elif run_config.training.backend == "unsloth":
-                run_unsloth_training(
+                steps = run_unsloth_training(
                     run_config=run_config,
                     tokenizer=tokenizer,
                     train_dataset=train_dataset,
@@ -499,6 +487,20 @@ def main() -> None:
                 )
             else:
                 raise RuntimeError(f"Unsupported backend={run_config.training.backend}")
+            if dataset_result.manifest.get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
+                output = Path(run_config.training.output_dir)
+                probe_path = output / "longest-row-probe.json"
+                qualification = output / "qualification.json"
+                summary = {"requested_steps": run_config.training.max_steps, "optimizer_steps": steps,
+                           "backend": run_config.training.backend, "dataset_manifest_sha256": dataset_result.manifest_sha256,
+                           "model": run_config.model.model_name, "revision": run_config.model.revision,
+                           "train_rows": len(train_dataset), "eval_rows": len(eval_dataset),
+                           "mlflow_run_id": run_id, "mlflow_experiment_id": active_run.info.experiment_id,
+                           "mlflow_tracking_uri": mlflow.get_tracking_uri(),
+                           "probe": json.loads(probe_path.read_text()) if probe_path.is_file() else None,
+                           "qualification": json.loads(qualification.read_text()) if qualification.is_file() else None,
+                           "adapter_files": sorted(path.name for path in (output / "final").iterdir() if path.is_file())}
+                Path("artifacts/training-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     except Exception as exc:
         crash_report = _write_crash_report(
             artifacts_dir=diagnostics_dir,

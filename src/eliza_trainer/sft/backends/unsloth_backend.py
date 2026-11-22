@@ -1,118 +1,81 @@
-from __future__ import annotations
-
-import logging
+"""Gemma 4 Unsloth training on already-tokenized, target-masked decision rows."""
+import gc
+import json
+from pathlib import Path
 
 import mlflow
 import torch
 from transformers import Trainer, TrainingArguments
 
-from src import model_ops
 from src.eliza_trainer.losses import DataCollatorWithLossMode
-from src.eliza_trainer.losses.weighted_loss_trainer import WeightedLossTrainer
+from ..unsloth_model import load_model, attach_language_adapter, verify_tokenizer
+from .trl_backend import _Progress, _probe_longest_row
 
-from ..run_config import SFTRunConfig
 
-
-def run_unsloth_training(
-    *,
-    run_config: SFTRunConfig,
-    tokenizer,
-    train_dataset,
-    eval_dataset,
-) -> None:
-    try:
-        from unsloth import FastLanguageModel
-    except Exception as exc:  # pragma: no cover - env dependent
-        raise RuntimeError(
-            "Unsloth backend requested but unsloth is not installed in this environment"
-        ) from exc
-
-    model, _ = FastLanguageModel.from_pretrained(
-        model_name=run_config.model.model_name,
-        max_seq_length=run_config.model.max_seq_len,
-        load_in_4bit=run_config.model.load_in_4bit,
-        dtype=torch.bfloat16 if run_config.model.use_bf16 else torch.float16,
-    )
-
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=run_config.model.lora_r,
-        lora_alpha=run_config.model.lora_alpha,
-        lora_dropout=run_config.model.lora_dropout,
-        bias="none",
-        target_modules=list(run_config.model.lora_target_modules),
-        use_gradient_checkpointing=run_config.training.gradient_checkpointing,
-        random_state=run_config.training.seed,
-    )
-
-    training_args = TrainingArguments(
-        output_dir=run_config.training.output_dir,
-        per_device_train_batch_size=run_config.training.train_batch_size,
-        per_device_eval_batch_size=run_config.training.eval_batch_size,
-        gradient_accumulation_steps=run_config.training.gradient_accumulation_steps,
-        logging_steps=run_config.training.logging_steps,
-        learning_rate=run_config.training.learning_rate,
-        num_train_epochs=run_config.training.num_train_epochs,
-        max_steps=run_config.training.max_steps,
-        eval_strategy=run_config.training.eval_strategy,
-        save_strategy=run_config.training.save_strategy,
-        warmup_steps=run_config.training.warmup_steps,
-        lr_scheduler_type=run_config.training.lr_scheduler_type,
-        report_to=["mlflow"],
-        bf16=run_config.model.use_bf16,
-        seed=run_config.training.seed,
-        gradient_checkpointing=run_config.training.gradient_checkpointing,
-    )
-
-    data_collator = DataCollatorWithLossMode(tokenizer=tokenizer)
-    
-    # Use custom trainer for weighted mode, standard Trainer otherwise
-    trainer_cls = WeightedLossTrainer if run_config.model.loss_mode == "weighted" else Trainer
-
-    trainer = trainer_cls(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
-    )
+def run_unsloth_training(*, run_config, tokenizer, train_dataset, eval_dataset):
+    from unsloth import FastModel
+    model, loaded_tokenizer = load_model(run_config)
+    verify_tokenizer(tokenizer, loaded_tokenizer)
+    model = attach_language_adapter(model, run_config)
+    collator = DataCollatorWithLossMode(tokenizer=tokenizer)
+    # Unsloth already installs its own checkpointing implementation. Do not
+    # override it via the generic probe or Trainer's checkpointing switch.
+    if run_config.training.probe_longest_row:
+        from dataclasses import replace
+        probe_config = replace(run_config, training=replace(run_config.training, gradient_checkpointing=False))
+        _probe_longest_row(model, collator, train_dataset, eval_dataset, probe_config)
+    training = run_config.training
+    trainer = Trainer(model=model, train_dataset=train_dataset, eval_dataset=eval_dataset,
+        data_collator=collator, callbacks=[_Progress()], args=TrainingArguments(
+            output_dir=training.output_dir, per_device_train_batch_size=training.train_batch_size,
+            per_device_eval_batch_size=training.eval_batch_size,
+            gradient_accumulation_steps=training.gradient_accumulation_steps,
+            learning_rate=training.learning_rate, max_steps=training.max_steps,
+            num_train_epochs=training.num_train_epochs, warmup_steps=training.warmup_steps,
+            logging_steps=training.logging_steps, save_strategy=training.save_strategy,
+            eval_strategy=training.eval_strategy, lr_scheduler_type=training.lr_scheduler_type,
+            bf16=True, seed=training.seed, report_to=["mlflow"], gradient_checkpointing=False,
+        ))
     trainer.train()
-
-    final_dir = f"{run_config.training.output_dir}/final"
-    trainer.save_model(output_dir=final_dir)
-    model_ops.save_model_and_maybe_push(
-        model=trainer.model,
-        tokenizer=tokenizer,
-        output_dir=final_dir,
-        push_to_hub=run_config.hub.push_to_hub,
-        adapter_repo_name=run_config.hub.adapter_repo_name,
-        publish_adapter=run_config.hub.publish_adapter,
-        publish_full_model=run_config.hub.publish_full_model,
-        full_model_repo_name=run_config.hub.full_model_repo_name,
-        adapter_tag=run_config.hub.adapter_tag,
-        full_model_tag=run_config.hub.full_model_tag,
-        allow_existing_tags=run_config.hub.allow_existing_tags,
-    )
-
-    # Log loss mode configuration
-    mlflow.log_param("backend", "unsloth")
-    mlflow.log_param("loss_mode", run_config.model.loss_mode)
-    if run_config.model.loss_mode == "weighted":
-        mlflow.log_param("prompt_loss_weight", run_config.model.prompt_loss_weight)
-    # Keep backward-compatible param for dashboards that may depend on it
-    mlflow.log_param("assistant_only_loss", run_config.model.loss_mode == "assistant_only")
-    
-    mlflow.log_param("load_in_4bit", run_config.model.load_in_4bit)
-    mlflow.log_param("gradient_checkpointing", run_config.training.gradient_checkpointing)
-    mlflow.log_param("lora_r", run_config.model.lora_r)
-    mlflow.log_param("lora_alpha", run_config.model.lora_alpha)
-    mlflow.log_param("lora_dropout", run_config.model.lora_dropout)
-    mlflow.log_param("lora_target_modules", ",".join(run_config.model.lora_target_modules))
-    mlflow.log_param("hub_push_to_hub", run_config.hub.push_to_hub)
-    mlflow.log_param("hub_publish_full_model", run_config.hub.publish_full_model)
-
-    logging.info("Unsloth training completed")
-    del model
-    torch.cuda.empty_cache()
-
-__all__ = ["run_unsloth_training"]
+    steps = trainer.state.global_step
+    if training.max_steps > 0 and steps != training.max_steps:
+        raise RuntimeError("Unsloth trainer did not reach the requested step budget")
+    print(f"Training finished at optimizer global_step={steps}", flush=True)
+    if not training.qualify_save_reload:
+        trainer.evaluate()
+    final = Path(training.output_dir) / "final"
+    model.save_pretrained(final, safe_serialization=True)
+    tokenizer.save_pretrained(final)
+    if training.qualify_save_reload:
+        print('ELIZA_PROGRESS {"stage":"qualifying_saved_adapter"}', flush=True)
+        sample = max(train_dataset, key=lambda row: len(row["input_ids"]))
+        boundary = next(i for i, value in enumerate(sample["labels"]) if value != -100)
+        prompt_ids = sample["input_ids"][:boundary]
+        FastModel.for_inference(model)
+        def generate(candidate):
+            ids = torch.tensor([prompt_ids], device=candidate.get_input_embeddings().weight.device)
+            with torch.inference_mode():
+                return candidate.generate(input_ids=ids, attention_mask=torch.ones_like(ids),
+                    do_sample=False, max_new_tokens=16, use_cache=True)[0, boundary:].cpu().tolist()
+        before = generate(model)
+        trainer.model = None
+        if hasattr(trainer, "model_wrapped"):
+            trainer.model_wrapped = None
+        del trainer, model
+        gc.collect()
+        torch.cuda.empty_cache()
+        # Load the pinned base then the saved adapter; avoid floating base revisions.
+        from peft import PeftModel
+        base, loaded_tokenizer = load_model(run_config)
+        verify_tokenizer(tokenizer, loaded_tokenizer)
+        reloaded = PeftModel.from_pretrained(base, final)
+        FastModel.for_inference(reloaded)
+        after = generate(reloaded)
+        if not before or before != after:
+            raise RuntimeError("Saved Unsloth adapter did not reproduce greedy tokens after reload")
+        (Path(training.output_dir) / "qualification.json").write_text(json.dumps(
+            dict(steps=steps, save_reload_tokens_equal=True, generated_tokens=len(after),
+                 backend="unsloth", revision=run_config.model.revision), indent=2))
+        print('ELIZA_PROGRESS {"stage":"save_reload_qualified"}', flush=True)
+    mlflow.log_param("unsloth_language_only", True)
+    return steps

@@ -80,6 +80,7 @@ class SFTTrainingConfig:
     num_train_epochs: int = 1
     max_steps: int = -1
     probe_longest_row: bool = False
+    qualify_save_reload: bool = False
     learning_rate: float = 2e-5
     train_batch_size: int = 2
     eval_batch_size: int = 2
@@ -369,12 +370,19 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
     use_lora = model_raw.get("use_lora", backend == "unsloth" or bool(model_raw.get("load_in_4bit", False)))
     if type(use_lora) is not bool or (not use_lora and (backend == "unsloth" or model_raw.get("load_in_4bit", False))):
         raise ValueError("model.use_lora must be boolean; 4-bit and Unsloth training require LoRA")
-    if backend != "trl" and (architecture != "causal_lm" or revision is not None or tokenizer_revision is not None):
-        raise ValueError("Pinned or explicit architecture loading is currently supported by the TRL backend only")
+    if backend == "unsloth" and (architecture != "gemma4_conditional_generation" or not revision or not tokenizer_revision):
+        raise ValueError("Unsloth backend requires a pinned Gemma 4 model/tokenizer")
+    if backend == "unsloth" and (loss_mode != "assistant_only" or bool(model_raw.get("load_in_4bit", False))):
+        raise ValueError("Gemma 4 Unsloth qualification uses BF16 LoRA and assistant-only loss")
+    if backend == "unsloth" and (not model_raw.get("use_bf16", True) or float(model_raw.get("lora_dropout", 0)) != 0):
+        raise ValueError("Gemma 4 Unsloth requires use_bf16=true and lora_dropout=0")
+    qualify_save_reload = training_raw.get("qualify_save_reload", False)
+    if type(qualify_save_reload) is not bool or (qualify_save_reload and backend != "unsloth"):
+        raise ValueError("training.qualify_save_reload currently requires the Unsloth backend")
     max_steps = training_raw.get("max_steps", -1)
     probe_longest_row = training_raw.get("probe_longest_row", False)
-    if type(probe_longest_row) is not bool or (probe_longest_row and (backend != "trl" or loss_mode != "assistant_only")):
-        raise ValueError("training.probe_longest_row requires a boolean and supports TRL assistant-only SFT")
+    if type(probe_longest_row) is not bool or (probe_longest_row and loss_mode != "assistant_only"):
+        raise ValueError("training.probe_longest_row requires boolean and assistant-only SFT")
     if type(max_steps) is not int or (max_steps != -1 and max_steps < 1):
         raise ValueError("training.max_steps must be -1 or a positive integer")
     model = SFTModelConfig(
@@ -418,6 +426,7 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         num_train_epochs=int(training_raw.get("num_train_epochs", 1)),
         max_steps=max_steps,
         probe_longest_row=probe_longest_row,
+        qualify_save_reload=qualify_save_reload,
         learning_rate=float(training_raw.get("learning_rate", 2e-5)),
         train_batch_size=int(training_raw.get("train_batch_size", 2)),
         eval_batch_size=int(training_raw.get("eval_batch_size", 2)),

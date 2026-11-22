@@ -1,0 +1,8 @@
+# Isolated from Qwen's runtime; joint resolution and pip check remain mandatory.
+-r sft-trl.arm64-cu130.txt
+unsloth==2026.11.9
+unsloth_zoo==2026.11.9
+peft==0.22.0
+triton==3.5.1
+torchvision @ https://download.pytorch.org/whl/cu130/torchvision-0.24.1-cp312-cp312-manylinux_2_28_aarch64.whl#sha256=89743dcee13e943f58b37c7647aff14b5bb24c11c84826376d457acf97586fec
+torchao==0.15.0

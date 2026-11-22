@@ -83,9 +83,17 @@ def evaluate(config, archive, directory):
     if model_config.architecture == "gemma4_conditional_generation":
         from transformers import Gemma4ForConditionalGeneration
         loader = Gemma4ForConditionalGeneration
-    base = loader.from_pretrained(model_config.model_name, revision=model_config.revision,
-                                                         dtype=torch.bfloat16, device_map={"": 0})
+    if config.identity.backend == "unsloth":
+        from .unsloth_model import load_model, verify_tokenizer
+        from unsloth import FastModel
+        base, loaded_tokenizer = load_model(config)
+        verify_tokenizer(tokenizer, loaded_tokenizer)
+    else:
+        base = loader.from_pretrained(model_config.model_name, revision=model_config.revision,
+                                      dtype=torch.bfloat16, device_map={"": 0})
     model = PeftModel.from_pretrained(base, directory).eval()
+    if config.identity.backend == "unsloth":
+        FastModel.for_inference(model)
     results = []
     for number, (example, row) in enumerate(zip(fixed, encoded, strict=True), start=1):
         boundary = next(i for i, label in enumerate(row["labels"]) if label != -100)

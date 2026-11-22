@@ -190,6 +190,7 @@ def test_household_loader_accepts_multiple_verified_shards(tmp_path, tokenizatio
 @pytest.mark.parametrize("model,revision,kind", [
     ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a", "qwen"),
     ("google/gemma-4-E4B-it", "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", "gemma4"),
+    ("unsloth/gemma-4-E4B-it", "4e22d7e59e078e63a14f351efdc5232ed366b621", "gemma4"),
 ])
 def test_comparison_checkpoint_templates_preserve_call_and_speech(tokenization, model, revision, kind):
     from transformers import AutoTokenizer

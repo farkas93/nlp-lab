@@ -80,6 +80,12 @@ memory/time overrides are explicit in the setup cell. Context defaults to 128K
 admission, with dynamic row lengths and no truncation; native and actual GPU fit
 are checked separately. These are starting experiments, not verified optimal recipes.
 
+**Gemma now uses the isolated Unsloth backend**, not the generic TRL/PEFT path
+that failed during adapter attachment. First use
+`sft_hass_gemma4_unsloth_qualification.yaml` with a new label, then inspect the
+two-step save/reload receipt before the full preset. See
+[the Gemma Unsloth runbook](gemma4-unsloth.md) for exact notebook settings.
+
 ## MLflow is checked, not assumed
 
 The remote preflight creates a labelled `remote-connectivity-check` run on the
