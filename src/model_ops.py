@@ -56,6 +56,9 @@ def init_model_for_sft(
     if architecture == "qwen3_5_conditional_generation":
         from transformers import Qwen3_5ForConditionalGeneration
         loader = Qwen3_5ForConditionalGeneration
+    elif architecture == "gemma4_conditional_generation":
+        from transformers import Gemma4ForConditionalGeneration
+        loader = Gemma4ForConditionalGeneration
     elif architecture != "causal_lm":
         raise ValueError(f"Unsupported SFT architecture: {architecture}")
     model = loader.from_pretrained(
@@ -68,7 +71,7 @@ def init_model_for_sft(
     )
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.use_cache = False
-    if architecture == "qwen3_5_conditional_generation":
+    if architecture in {"qwen3_5_conditional_generation", "gemma4_conditional_generation"}:
         model.config.text_config.use_cache = False
     return model
 

@@ -371,7 +371,7 @@ def main() -> None:
             enable_thinking=run_config.model.enable_thinking,
         )
 
-        if dataset_result.manifest.get("kind") == "hass-experimental-sft-v1":
+        if dataset_result.manifest.get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
             if not run_config.model.revision or not run_config.model.tokenizer_revision:
                 raise ValueError("HASS SFT requires pinned model and tokenizer revisions")
             if not len(eval_dataset) or any(stats.rows_dropped or stats.rows_truncated for stats in (train_token_stats, eval_token_stats)):
@@ -442,6 +442,8 @@ def main() -> None:
         mlflow.set_experiment(run_config.training.experiment_name)
         with mlflow.start_run(run_name=run_config.training.run_name) as active_run:
             run_id = active_run.info.run_id
+            print("ELIZA_PROGRESS " + json.dumps(dict(stage="mlflow_connected", mlflow_run_id=run_id,
+                  mlflow_url=f"{mlflow.get_tracking_uri().rstrip('/')}/#/experiments/{active_run.info.experiment_id}/runs/{run_id}")), flush=True)
             _mlflow_log_dataset_lineage(
                 dataset_result.manifest_uri,
                 dataset_result.manifest_sha256,
@@ -476,7 +478,7 @@ def main() -> None:
                     train_dataset=train_dataset,
                     eval_dataset=eval_dataset,
                 )
-                if dataset_result.manifest.get("kind") == "hass-experimental-sft-v1":
+                if dataset_result.manifest.get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
                     output = Path(run_config.training.output_dir)
                     probe_path = output / "longest-row-probe.json"
                     summary = {"requested_steps": run_config.training.max_steps, "optimizer_steps": steps,

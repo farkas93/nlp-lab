@@ -159,3 +159,48 @@ def test_hass_loader_consumes_only_pinned_parquet_bytes(tmp_path, tokenization):
     path.write_bytes(path.read_bytes() + b"changed")
     with pytest.raises(ValueError, match="split byte checksum"):
         load_sft_manifest_dataset(**args)
+
+
+def test_household_loader_accepts_multiple_verified_shards(tmp_path, tokenization):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from src.sft_dataset_loader import load_sft_manifest_dataset
+    prefix = 'dataset_id=household/dataset_version=household-test'
+    entries = []
+    for split in ('train', 'eval'):
+        for part in range(2):
+            path = tmp_path / f'split={split}/part-{part:05d}.parquet'
+            path.parent.mkdir(exist_ok=True)
+            pq.write_table(pa.Table.from_pylist([decision_row()] * 40), path)
+            entries.append(dict(split=split, key=f'{prefix}/split={split}/{path.name}', rows=40,
+                                sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    manifest = tmp_path / 'manifest.json'
+    manifest.write_text(json.dumps(dict(kind='hass-household-sft-v1', dataset_id='household',
+                                       dataset_version='household-test', splits=entries)))
+    args = dict(manifest_uri=str(manifest), train_split='train', eval_split='eval', max_train_samples=None,
+                max_eval_samples=None, expected_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest())
+    loaded = load_sft_manifest_dataset(**args)
+    assert len(loaded.train_dataset) == len(loaded.eval_dataset) == 80
+    path.write_bytes(path.read_bytes() + b'corrupt')
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        load_sft_manifest_dataset(**args)
+
+
+@pytest.mark.skipif(os.getenv("HASS_PINNED_TOKENIZER_TEST") != "1", reason="opt-in tokenizer downloads")
+@pytest.mark.parametrize("model,revision,kind", [
+    ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a", "qwen"),
+    ("google/gemma-4-E4B-it", "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", "gemma4"),
+])
+def test_comparison_checkpoint_templates_preserve_call_and_speech(tokenization, model, revision, kind):
+    from transformers import AutoTokenizer
+    Dataset, tokenize = tokenization
+    tokenizer = AutoTokenizer.from_pretrained(model, revision=revision)
+    speech = decision_row()
+    action = copy.deepcopy(speech)
+    action["messages"] = speech["messages"][:2]
+    action["target_message"] = speech["messages"][2]
+    rows = tokenize(Dataset.from_list([action, speech]), tokenizer, 131072, "assistant_only",
+                    tokenizer_type=kind, enable_thinking=False)
+    texts = [tokenizer.decode([value for value in row["labels"] if value != -100]) for row in rows]
+    assert "HassTurnOff" in texts[0] and "Kitchen light" in texts[0]
+    assert speech["target_text"] in texts[1]

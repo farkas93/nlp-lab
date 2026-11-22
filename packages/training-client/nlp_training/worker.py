@@ -8,6 +8,7 @@ import io
 import json
 import os
 import signal
+import selectors
 import subprocess
 import tarfile
 import time
@@ -133,7 +134,7 @@ def execute(args, storage):
             if hashlib.sha256(evidence).hexdigest() != digest:
                 raise ValueError("Frozen dataset manifest checksum mismatch")
             (run_dir / "dataset-manifest.json").write_bytes(evidence)
-            if json.loads(evidence).get("kind") == "hass-experimental-sft-v1" and ack is None:
+            if json.loads(evidence).get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"} and ack is None:
                 raise ValueError("Private HASS SFT requires explicit acknowledgement of its manifest SHA-256")
             if interrupted:
                 raise InterruptedError("Cancelled before training startup")
@@ -151,7 +152,7 @@ def execute(args, storage):
             (run_dir / "environment.json").write_text(json.dumps(environment, indent=2))
             kind = manifest["kind"]
             if kind in {"hass-context", "hass-eval"}:
-                if json.loads(evidence).get("kind") != "hass-experimental-sft-v1":
+                if json.loads(evidence).get("kind") not in {"hass-experimental-sft-v1", "hass-household-sft-v1"}:
                     raise ValueError("Expected a private HASS export")
                 command = [training_python, "-m", "src.eliza_trainer.sft.remote_checks", "--kind", kind,
                            "--config", manifest["config"], "--bucket", args.bucket, "--prefix", prefix]
@@ -164,23 +165,42 @@ def execute(args, storage):
                 child_env.pop("HF_MLFLOW_LOG_ARTIFACTS", None)
             child = subprocess.Popen(command, cwd=workspace, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             progress({"hass-context": "measuring_context", "hass-eval": "evaluating_adapter"}.get(kind, "trainer_starting"))
-            last_upload = time.monotonic()
-            while True:
-                chunk = child.stdout.readline(64 * 1024)
-                if not chunk:
-                    break
-                log.write(chunk)
-                log.flush()
-                os.write(1, chunk)
-                if chunk.startswith(b"ELIZA_PROGRESS "):
-                    try:
-                        event = json.loads(chunk.removeprefix(b"ELIZA_PROGRESS "))
-                        progress(event.pop("stage"), **event)
-                    except (ValueError, KeyError, TypeError):
-                        pass
-                if time.monotonic() - last_upload >= 30:
-                    storage.upload_file(str(log_path), args.bucket, prefix + "/train.log")
-                    last_upload = time.monotonic()
+            last_upload = 0
+            pending = b""
+            tail = b""
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ)
+                while selector.get_map():
+                    for key_event, _ in selector.select(timeout=1):
+                        chunk = os.read(key_event.fileobj.fileno(), 64 * 1024)
+                        if not chunk:
+                            selector.unregister(key_event.fileobj)
+                            continue
+                        log.write(chunk)
+                        log.flush()
+                        os.write(1, chunk)
+                        tail = (tail + chunk)[-32768:]
+                        pending = (pending + chunk)[-131072:]
+                        while b"\n" in pending:
+                            line, pending = pending.split(b"\n", 1)
+                            if line.startswith(b"ELIZA_PROGRESS "):
+                                try:
+                                    event = json.loads(line.removeprefix(b"ELIZA_PROGRESS "))
+                                    progress(event.pop("stage"), **event)
+                                except (ValueError, KeyError, TypeError):
+                                    pass
+                    if time.monotonic() - last_upload >= 3:
+                        try:
+                            storage.put_object(Bucket=args.bucket, Key=prefix + "/live-log.txt", Body=tail,
+                                               ContentType="text/plain; charset=utf-8")
+                        except Exception:
+                            pass
+                        last_upload = time.monotonic()
+            try:
+                storage.put_object(Bucket=args.bucket, Key=prefix + "/live-log.txt", Body=tail,
+                                   ContentType="text/plain; charset=utf-8")
+            except Exception:
+                pass
             return_code = child.wait()
             result["return_code"] = return_code
     except Exception as exc:

@@ -146,6 +146,10 @@ def run_trl_training(
     if run_config.training.max_steps > 0 and trainer.state.global_step != run_config.training.max_steps:
         raise RuntimeError("Trainer did not reach the configured optimizer step budget")
     logging.info("Training finished at optimizer global_step=%d", trainer.state.global_step)
+    if len(eval_dataset):
+        print('ELIZA_PROGRESS {"stage":"evaluating_loss"}', flush=True)
+        metrics = trainer.evaluate()
+        mlflow.log_metrics({key: value for key, value in metrics.items() if isinstance(value, (int, float))})
 
     final_dir = f"{run_config.training.output_dir}/final"
     trainer.save_model(output_dir=final_dir)

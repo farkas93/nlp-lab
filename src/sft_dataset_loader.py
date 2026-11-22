@@ -160,6 +160,14 @@ class GemmaNormalizer(ToolCallNormalizer):
         }
 
 
+class Gemma4Normalizer(QwenNormalizer):
+    """Gemma 4's pinned template requires nested function objects with decoded args."""
+    def transform_tool_call(self, tool_call):
+        function = super().transform_tool_call(tool_call)
+        return {"type": "function", "function": function,
+                **({"id": tool_call["id"]} if tool_call.get("id") else {})}
+
+
 class OpenAINormalizer(ToolCallNormalizer):
     """Normalizer for OpenAI/GPT family tokenizers.
     
@@ -309,6 +317,7 @@ def get_normalizer(tokenizer_type: str) -> ToolCallNormalizer:
         Appropriate ToolCallNormalizer instance
     """
     normalizers: dict[str, ToolCallNormalizer] = {
+        'gemma4': Gemma4Normalizer(),
         'qwen': QwenNormalizer(),
         'gemma': GemmaNormalizer(),
         'openai': OpenAINormalizer(),
@@ -415,28 +424,32 @@ def _load_manifest(manifest_uri: str) -> tuple[dict[str, Any], str]:
 def _load_verified_hass_split(manifest_uri, manifest, split_name, storage_options):
     """Decode the same bounded bytes that passed the pinned split digest."""
     entries = [item for item in manifest["splits"] if item.get("split") == split_name]
-    if len(entries) != 1 or split_name not in {"train", "eval"}:
-        raise ValueError("Expected one HASS Parquet object per train/eval split")
-    entry = entries[0]
+    household = manifest.get("kind") == "hass-household-sft-v1"
+    if not entries or len(entries) > 256 or (not household and len(entries) != 1) or split_name not in {"train", "eval"}:
+        raise ValueError("Invalid bounded HASS shard set")
     prefix = f"dataset_id={manifest['dataset_id']}/dataset_version={manifest['dataset_version']}"
-    if entry.get("key") != f"{prefix}/split={split_name}/part-00000.parquet" or not re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", "")):
-        raise ValueError("Invalid HASS split identity or checksum")
-    parsed = urlparse(manifest_uri)
-    uri = _resolve_split_file_uri(manifest_uri, entry["key"])
-    if not parsed.scheme:  # local mirror of the exported manifest and split directories
-        uri = str(Path(manifest_uri).parent / f"split={split_name}/part-00000.parquet")
-    options = storage_options if parsed.scheme in {"s3", "s3a"} else {}
-    limit = 32 * 1024 * 1024
-    with fsspec.open(uri, "rb", **options) as handle:
-        payload = handle.read(limit + 1)
-    if len(payload) > limit or hashlib.sha256(payload).hexdigest() != entry["sha256"]:
-        raise ValueError(f"HASS {split_name} split byte checksum mismatch or size limit exceeded")
-    table = pq.read_table(io.BytesIO(payload))
-    if not 1 <= table.num_rows <= 49 or table.num_rows != entry.get("rows"):
-        raise ValueError(f"HASS {split_name} split row count mismatch")
-    if any(mode != "assistant_decision" for mode in table["target_mode"].to_pylist()):
-        raise ValueError("HASS split contains a row outside assistant_decision mode")
-    return Dataset(table)
+    tables = []
+    for number, entry in enumerate(entries):
+        if entry.get("key") != f"{prefix}/split={split_name}/part-{number:05d}.parquet" or not re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", "")):
+            raise ValueError("Invalid HASS split identity or checksum")
+        parsed = urlparse(manifest_uri)
+        uri = _resolve_split_file_uri(manifest_uri, entry["key"])
+        if not parsed.scheme:
+            uri = str(Path(manifest_uri).parent / f"split={split_name}/part-{number:05d}.parquet")
+        options = storage_options if parsed.scheme in {"s3", "s3a"} else {}
+        limit = 32 * 1024 * 1024
+        with fsspec.open(uri, "rb", **options) as handle:
+            payload = handle.read(limit + 1)
+        if len(payload) > limit or hashlib.sha256(payload).hexdigest() != entry["sha256"]:
+            raise ValueError(f"HASS {split_name} split byte checksum mismatch or size limit exceeded")
+        table = pq.read_table(io.BytesIO(payload))
+        if not 1 <= table.num_rows <= (64 if household else 49) or table.num_rows != entry.get("rows"):
+            raise ValueError(f"HASS {split_name} split row count mismatch")
+        if any(mode != "assistant_decision" for mode in table["target_mode"].to_pylist()):
+            raise ValueError("HASS split contains a row outside assistant_decision mode")
+        tables.append(table)
+    import pyarrow as pa
+    return Dataset(pa.concat_tables(tables))
 
 
 def _split_files_from_manifest(manifest: dict[str, Any], split_name: str) -> list[str]:
@@ -480,7 +493,7 @@ def load_sft_manifest_dataset(
     manifest, manifest_sha256 = _load_manifest(manifest_uri)
     if expected_manifest_sha256 is not None and manifest_sha256 != expected_manifest_sha256:
         raise ValueError("Dataset manifest checksum mismatch")
-    hass = manifest.get("kind") == "hass-experimental-sft-v1"
+    hass = manifest.get("kind") in {"hass-experimental-sft-v1", "hass-household-sft-v1"}
     if hass:
         if expected_manifest_sha256 is None or (train_split, eval_split) != ("train", "eval"):
             raise ValueError("HASS smoke requires an exact manifest pin and train/eval splits")
@@ -693,7 +706,7 @@ def tokenize_with_loss_mode(
     
     # Determine if we should pass enable_thinking to apply_chat_template
     # Only Qwen3/3.5 tokenizers support this parameter
-    use_enable_thinking = detected_type == 'qwen'
+    use_enable_thinking = detected_type in {'qwen', 'gemma4'}
     if use_enable_thinking:
         LOGGER.info(
             "Qwen chat-template enable_thinking=%s", enable_thinking
