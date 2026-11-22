@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .logtail import compact
+
 
 SETTINGS = ("NLP_LAB_REPO", "INFERENCE_CONTROL_URL", "CONTROL_DAEMON_TOKEN_FILE",
             "SLURM_REST_URL", "SLURM_ARTIFACT_BUCKET", "MLFLOW_TRACKING_URI",
@@ -166,10 +168,11 @@ def watch_run(training, run_id, run_dir, *, poll_seconds=5, timeout_seconds=7200
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "404"}:
                 raise
+        tail = compact(tail)
         view = (state, tail)
         if view != previous:
             (folder / "status.json").write_text(json.dumps(state, indent=2))
-            (folder / "live-log.txt").write_text(tail)
+            (folder / "live-log.txt").write_text(tail + ("\n" if tail else ""))
             if render:
                 render(state, tail)
             else:

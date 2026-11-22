@@ -101,7 +101,8 @@ def evaluate(config, archive, directory):
                             base_exact=original.tolist() == row["input_ids"][boundary:],
                             adapter_exact=tuned.tolist() == row["input_ids"][boundary:],
                             base_hit_output_budget=len(original) == 96, adapter_hit_output_budget=len(tuned) == 96))
-        print("ELIZA_PROGRESS " + json.dumps(dict(stage="evaluating_held_out", step=number, total=len(fixed))), flush=True)
+        if number % 25 == 0 or number == len(fixed):
+            print("ELIZA_PROGRESS " + json.dumps(dict(stage="evaluating_held_out", step=number, total=len(fixed))), flush=True)
     return results
 
 
