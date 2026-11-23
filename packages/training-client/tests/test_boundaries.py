@@ -37,6 +37,32 @@ def test_profile_delegation_uses_the_canonical_runtime_requirements(tmp_path):
     assert not any("cuda.is_available" in " ".join(call) for call in calls)
 
 
+def test_unsloth_profile_installs_binary_requirements_before_first_party_package(tmp_path):
+    root = tmp_path / "runtime"
+    (root / "venv/bin").mkdir(parents=True)
+    (root / "venv/bin/python").touch()
+    calls = []
+    with patch.object(provision, "run", side_effect=lambda args, **kwargs: calls.append([str(arg) for arg in args])):
+        report = provision.provision("unsloth-gemma4", root, tmp_path / "source")
+    installs = [call for call in calls if call[1:3] == ["pip", "install"]]
+    assert len(installs) == 2
+
+    requirements_install, source_install = installs
+    assert "--only-binary" in requirements_install and ":all:" in requirements_install
+    assert any(arg.endswith("nlp_training/profiles/unsloth-gemma4.resolved.txt") for arg in requirements_install)
+    assert str(tmp_path / "source") not in requirements_install
+
+    assert "--no-deps" in source_install and str(tmp_path / "source") in source_install
+    assert "--only-binary" not in source_install
+    assert report["definition"]["minimum_driver_major"] == 580
+
+    repair = next(i for i, call in enumerate(calls) if "nlp_training.wheel_metadata" in call)
+    check = next(i for i, call in enumerate(calls) if call[1:3] == ["pip", "check"])
+    assert source_install in calls
+    assert calls.index(source_install) < repair < check
+    assert not any("cuda.is_available" in " ".join(call) for call in calls)
+
+
 def test_probe_is_gpu_allocated_and_python_body_compiles():
     payload = job("00000000-0000-4000-8000-000000000001", 30)
     assert payload["job"]["tres_per_node"] == "gres/gpu:1"

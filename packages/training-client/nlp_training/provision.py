@@ -27,15 +27,20 @@ def provision(name, root: Path, source: Path, *, check=False):
     if not check:
         if not python.exists():
             run([uv, "venv", "--python", definition["python"], training], env=env)
-        # Resolve client and trainer together: s3fs constrains botocore via
-        # aiobotocore, while the client constrains the same package via boto3.
-        install = [uv, "pip", "install", "--python", python, source]
         if name == "unsloth-gemma4":
-            install += ["--only-binary", ":all:"]
-        if definition["requirements"]:
-            requirements = Path(__file__).parent / "profiles" / definition["requirements"]
-            install += ["-r", requirements]
-        run(install, env=env)
+            if definition["requirements"]:
+                requirements = Path(__file__).parent / "profiles" / definition["requirements"]
+                run([uv, "pip", "install", "--python", python, "-r", requirements,
+                     "--only-binary", ":all:"], env=env)
+            run([uv, "pip", "install", "--python", python, "--no-deps", source], env=env)
+        else:
+            # Resolve client and trainer together: s3fs constrains botocore via
+            # aiobotocore, while the client constrains the same package via boto3.
+            install = [uv, "pip", "install", "--python", python, source]
+            if definition["requirements"]:
+                requirements = Path(__file__).parent / "profiles" / definition["requirements"]
+                install += ["-r", requirements]
+            run(install, env=env)
     if not python.exists():
         raise RuntimeError("Training interpreter is missing")
     if not check and definition.get("metadata_repair"):
