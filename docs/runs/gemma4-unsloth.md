@@ -61,9 +61,11 @@ Unsloth/Unsloth Zoo 2026.11.9, PEFT 0.22.0, Triton 3.5.1, the matching official
 ARM64 torchvision 0.24.1 wheel, and torchao 0.15.0. Transitive versions are resolved
 in `packages/training-client/nlp_training/profiles/unsloth-gemma4.resolved.txt`.
 The resolver was checked for CPython 3.12 / Linux aarch64 with binary wheels only,
-jointly including the lightweight client's dependencies. Installation still runs
-`uv pip check` and the pinned wheel verification. Runtime records archive the
-actual installed package versions. No `--no-deps` installation or xformers source
+jointly including the lightweight client's dependencies. The pinned third-party
+requirements are installed as wheels only; the local first-party training client is
+then installed separately with `--no-deps` so `--only-binary :all:` does not reject
+it. Installation still runs `uv pip check` and the pinned wheel verification.
+Runtime records archive the actual installed package versions. No xformers source
 build is used.
 
 This proves dependency resolution and code contracts, **not** GB10 kernel execution.

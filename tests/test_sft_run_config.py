@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from src.eliza_trainer.sft.run_config import load_sft_run_config
+from src.eliza_trainer.sft.unsloth_model import UNSLOTH_MODEL_REVISION, expected_model_name
 
 
 def test_private_smoke_template_resolves_pinned_bf16_lora(tmp_path):
@@ -37,6 +38,9 @@ def test_household_presets_are_pinned_and_private(preset):
     assert config.model.use_lora and not config.hub.push_to_hub
     assert config.model.max_seq_len == 131072
     assert config.training.max_steps == 100
+    if preset == 'gemma4':
+        assert config.model.model_name == expected_model_name()
+        assert config.model.revision == config.model.tokenizer_revision == UNSLOTH_MODEL_REVISION
 
 
 def _write_config(path: Path, content: str) -> None:

@@ -8,6 +8,8 @@ import re
 
 import yaml
 
+from .unsloth_model import UNSLOTH_MODEL_REVISION, expected_model_name
+
 
 CONFIG_SCHEMA_VERSION = 2
 BACKENDS = {"trl", "unsloth"}
@@ -372,6 +374,10 @@ def load_sft_run_config(config_path: str) -> SFTRunConfig:
         raise ValueError("model.use_lora must be boolean; 4-bit and Unsloth training require LoRA")
     if backend == "unsloth" and (architecture != "gemma4_conditional_generation" or not revision or not tokenizer_revision):
         raise ValueError("Unsloth backend requires a pinned Gemma 4 model/tokenizer")
+    if backend == "unsloth" and (f"{model_owner}/{model_name}" != expected_model_name()
+                                  or revision != UNSLOTH_MODEL_REVISION
+                                  or tokenizer_revision != revision):
+        raise ValueError("Gemma 4 Unsloth training requires the pinned Unsloth checkpoint and tokenizer")
     if backend == "unsloth" and (loss_mode != "assistant_only" or bool(model_raw.get("load_in_4bit", False))):
         raise ValueError("Gemma 4 Unsloth qualification uses BF16 LoRA and assistant-only loss")
     if backend == "unsloth" and (not model_raw.get("use_bf16", True) or float(model_raw.get("lora_dropout", 0)) != 0):
