@@ -6,9 +6,9 @@ data:
   dataset_version: SET_FROM_RELEASE
   expected_manifest_sha256: SET_FROM_RELEASE
 model:
-  owner: google
+  owner: unsloth
   name: gemma-4-E4B-it
-  revision: 4ecc2ba63bcac23ba4a767fc87025b1450f84c9c
+  revision: 4e22d7e59e078e63a14f351efdc5232ed366b621
   architecture: gemma4_conditional_generation
   max_seq_len: 131072
   use_bf16: true

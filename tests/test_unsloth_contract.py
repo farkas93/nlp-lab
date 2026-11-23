@@ -4,9 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import yaml
 
 from src.eliza_trainer.sft.run_config import load_sft_run_config
-from src.eliza_trainer.sft.unsloth_model import load_model, attach_language_adapter, verify_tokenizer
+from src.eliza_trainer.sft.unsloth_model import load_model, attach_language_adapter, verify_tokenizer, expected_model_name, UNSLOTH_MODEL_REVISION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_gemma_unsloth_loader_preserves_pins_and_language_only(monkeypatch):
     config = load_sft_run_config(str(ROOT / 'configs/sft_hass_gemma4_unsloth_qualification.yaml'))
     assert config.training.max_steps == 2 and config.training.qualify_save_reload
+    assert config.model.model_name == expected_model_name()
+    assert config.model.revision == config.model.tokenizer_revision == UNSLOTH_MODEL_REVISION
     model = Mock()
     model.named_parameters.return_value = [('base_model.model.language_model.layers.0.q_proj.lora_A.default.weight',
                                             SimpleNamespace(requires_grad=True)),
@@ -37,6 +40,16 @@ def test_gemma_unsloth_loader_preserves_pins_and_language_only(monkeypatch):
     model.named_parameters.return_value = [('vision.lora_A.weight', SimpleNamespace(requires_grad=True))]
     with pytest.raises(RuntimeError, match='exclusively language'):
         attach_language_adapter(model, config)
+
+
+def test_unsloth_config_rejects_a_different_checkpoint_or_tokenizer(tmp_path):
+    template = yaml.safe_load((ROOT / 'configs/sft_hass_gemma4_unsloth_qualification.yaml').read_text())
+    template['model']['owner'] = 'google'
+    template['model']['revision'] = '4ecc2ba63bcac23ba4a767fc87025b1450f84c9c'
+    path = tmp_path / 'google.yaml'
+    path.write_text(yaml.safe_dump(template))
+    with pytest.raises(ValueError, match='pinned Unsloth checkpoint'):
+        load_sft_run_config(str(path))
 
 
 def test_serialization_mismatch_fails_instead_of_silently_changing_template():
