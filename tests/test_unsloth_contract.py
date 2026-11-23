@@ -28,7 +28,7 @@ def test_gemma_unsloth_loader_preserves_pins_and_language_only(monkeypatch):
     assert load_model(config) == (model, tokenizer)
     kwargs = fast.from_pretrained.call_args.kwargs
     assert kwargs['model_name'] == 'unsloth/gemma-4-E4B-it'
-    assert kwargs['revision'] == config.model.revision and kwargs['use_exact_model_name']
+    assert kwargs['revision'] == '4e22d7e59e078e63a14f351efdc5232ed366b621' and kwargs['use_exact_model_name']
     assert not kwargs['fix_tokenizer'] and not kwargs['load_in_4bit'] and not kwargs['fast_inference']
     attach_language_adapter(model, config)
     kwargs = fast.get_peft_model.call_args.kwargs

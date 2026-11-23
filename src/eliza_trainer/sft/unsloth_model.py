@@ -7,7 +7,7 @@ def load_model(config):
     from unsloth import FastModel
 
     model, processor = FastModel.from_pretrained(
-        model_name=config.model.model_name, revision=config.model.revision,
+        model_name="unsloth/gemma-4-E4B-it", revision="4e22d7e59e078e63a14f351efdc5232ed366b621",
         max_seq_length=config.model.max_seq_len, load_in_4bit=False, load_in_16bit=True,
         dtype=torch.bfloat16, full_finetuning=False, fast_inference=False,
         fix_tokenizer=False, use_exact_model_name=True,

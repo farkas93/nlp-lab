@@ -2,6 +2,7 @@
 import gc
 import json
 from pathlib import Path
+from dataclasses import replace
 
 import mlflow
 import torch
@@ -21,7 +22,6 @@ def run_unsloth_training(*, run_config, tokenizer, train_dataset, eval_dataset):
     # Unsloth already installs its own checkpointing implementation. Do not
     # override it via the generic probe or Trainer's checkpointing switch.
     if run_config.training.probe_longest_row:
-        from dataclasses import replace
         probe_config = replace(run_config, training=replace(run_config.training, gradient_checkpointing=False))
         _probe_longest_row(model, collator, train_dataset, eval_dataset, probe_config)
     training = run_config.training
@@ -61,7 +61,7 @@ def run_unsloth_training(*, run_config, tokenizer, train_dataset, eval_dataset):
         trainer.model = None
         if hasattr(trainer, "model_wrapped"):
             trainer.model_wrapped = None
-        del trainer, model
+        del trainer, model, base
         gc.collect()
         torch.cuda.empty_cache()
         # Load the pinned base then the saved adapter; avoid floating base revisions.
