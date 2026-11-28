@@ -1,0 +1,83 @@
+name: Training client
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Version already committed to main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          uv lock --check
+          uv lock --project packages/training-client --check
+          uv run --locked pytest
+      - name: Build and check the release wheel
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheels" packages/training-client
+          wheel=("$RUNNER_TEMP"/wheels/*.whl)
+          args=()
+          if [[ -n "$RELEASE_VERSION" ]]; then args+=(--expected "$RELEASE_VERSION"); fi
+          python scripts/check_training_release.py "${wheel[@]}" "${args[@]}"
+          uv venv --python 3.10 "$RUNNER_TEMP/wheel-test"
+          uv pip install --python "$RUNNER_TEMP/wheel-test/bin/python" "${wheel[@]}"
+          uv pip check --python "$RUNNER_TEMP/wheel-test/bin/python"
+          "$RUNNER_TEMP/wheel-test/bin/python" -I -c 'import sys; from nlp_training import TrainingClient; from nlp_training.operator import submit_prepared; from nlp_training.provision import profile; assert profile("unsloth-gemma4")["requirements"]; assert "torch" not in sys.modules'
+          (cd "$RUNNER_TEMP/wheels" && sha256sum -- *.whl > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: training-client-wheel
+          path: ${{ runner.temp }}/wheels/
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: training-release
+    concurrency:
+      group: training-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: training-client-wheel
+          path: wheels
+      - name: Publish the verified wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          UV_PUBLISH_URL: ${{ vars.TRAINING_PUBLISH_URL }}
+          UV_PUBLISH_TOKEN: ${{ secrets.TRAINING_PUBLISH_TOKEN }}
+        run: |
+          cd wheels
+          sha256sum -c SHA256SUMS
+          : "${UV_PUBLISH_URL:?Set the private Python publish URL}"
+          : "${UV_PUBLISH_TOKEN:?Set the private Python publish token}"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
+          # Fail on an existing tag or on an indeterminate API response.
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_VERSION")
+          test "$status" = 404
+          uv publish -- *.whl
+          gh release create "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --generate-notes -- *.whl SHA256SUMS
