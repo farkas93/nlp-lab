@@ -61,7 +61,7 @@ def run_unsloth_training(*, run_config, tokenizer, train_dataset, eval_dataset):
         trainer.model = None
         if hasattr(trainer, "model_wrapped"):
             trainer.model_wrapped = None
-        del trainer, model, base
+        del trainer, model
         gc.collect()
         torch.cuda.empty_cache()
         # Load the pinned base then the saved adapter; avoid floating base revisions.
